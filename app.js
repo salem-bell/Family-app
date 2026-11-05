@@ -652,7 +652,9 @@ function render(){
   const ms0 = $('#msgs'), keepMs = ms0 && tab === 'chat' && chat.open ? [chat.open, ms0.scrollTop, ms0.scrollHeight - ms0.scrollTop - ms0.clientHeight] : null;
   document.body.classList.toggle('inchat', tab === 'chat' && !!chat.open);
   document.documentElement.style.setProperty('--hh', ($('header') ? $('header').offsetHeight : 0) + 'px');
+  const formSnap = snapForms();
   $('#main').innerHTML = tab === 'today' ? viewToday(now) : VIEWS[tab] ? VIEWS[tab](now) : viewToday(now);
+  restoreForms(formSnap);
   if (keepMs && chat.open === keepMs[0]){ const ms = $('#msgs'); if (ms) ms.scrollTop = keepMs[2] < 80 ? ms.scrollHeight : keepMs[1]; }
   if (taFocus){ const t2 = $('.composer textarea'); if (t2){ t2.focus(); try { t2.setSelectionRange(taSel[0], taSel[1]); } catch (_) {} } }
   renderSheet();
@@ -1151,9 +1153,36 @@ function goTo(go){
 if ('serviceWorker' in navigator && inPWA()) navigator.serviceWorker.addEventListener('message', e => { if (e.data && e.data.go !== undefined) goTo(e.data.go); });
 
 /* =========================================================
+   Half-typed forms survive every redraw (refreshes, other people's changes, saving something else).
+   A form that was just submitted is left to clear itself.
+   ========================================================= */
+const fieldsOf = () => [...document.querySelectorAll('#main form[data-form] input, #main form[data-form] textarea, #main form[data-form] select')].filter(el => el.name && el.type !== 'file' && el.type !== 'hidden' && el.type !== 'search');
+const fieldChanged = el => el.type === 'checkbox' || el.type === 'radio' ? el.checked !== el.defaultChecked : el.tagName === 'SELECT' ? el.selectedIndex !== Math.max(0, [...el.options].findIndex(o => o.defaultSelected)) : el.value !== el.defaultValue;
+const fieldKey = el => { const f = el.form, d = f ? Object.keys(f.dataset).sort().filter(k => k !== 'sent').map(k => k + '=' + f.dataset[k]).join('&') : ''; return d + '|' + el.name + (el.type === 'checkbox' || el.type === 'radio' ? '=' + el.value : ''); };
+function formsDirty(){ return fieldsOf().some(el => el.form && !el.form.dataset.sent && fieldChanged(el)); }
+function snapForms(){
+  const a = document.activeElement, out = { vals: {}, focus: null };
+  fieldsOf().forEach(el => { if (!el.form || el.form.dataset.sent || el.closest('.composer') || !fieldChanged(el)) return;
+    out.vals[fieldKey(el)] = el.type === 'checkbox' || el.type === 'radio' ? el.checked : el.value; });
+  if (a && a.form && !a.form.dataset.sent && a.name && !a.closest('.composer') && /INPUT|TEXTAREA|SELECT/.test(a.tagName)) out.focus = { k: fieldKey(a), s: a.selectionStart, e: a.selectionEnd };
+  return out;
+}
+function restoreForms(snap){
+  if (!snap || (!Object.keys(snap.vals).length && !snap.focus)) return;
+  fieldsOf().forEach(el => { const k = fieldKey(el); if (!(k in snap.vals)) return; const v = snap.vals[k];
+    if (el.type === 'checkbox' || el.type === 'radio') el.checked = v; else el.value = v;
+    const det = el.closest('details'); if (det) det.open = true; });
+  if (snap.focus){ const el = fieldsOf().find(x => fieldKey(x) === snap.focus.k); if (el){ el.focus({ preventScroll: true }); try { el.setSelectionRange(snap.focus.s, snap.focus.e); } catch (_) {} } }
+}
+// mark a form the moment it's submitted, so the redraw that follows doesn't put its text back
+document.addEventListener('submit', ev => { const f = ev.target; if (f && f.dataset) f.dataset.sent = '1'; }, true);
+['input', 'change'].forEach(t => document.addEventListener(t, ev => { const f = ev.target && ev.target.form; if (f && f.dataset && f.dataset.sent) delete f.dataset.sent; }, true));   // typing again (e.g. after "Add a title") counts as unsent
+
+/* =========================================================
    Start
    ========================================================= */
-const typing = () => { const a = document.activeElement; return isEditing() || (a && /INPUT|TEXTAREA|SELECT/.test(a.tagName) && a.value); };
+/** Is anything half-filled-in on screen? Then the automatic refresh waits (the focused box alone isn't enough: tapping into an empty date box used to count as "not typing"). */
+const typing = () => { const a = document.activeElement; return isEditing() || (a && /INPUT|TEXTAREA|SELECT/.test(a.tagName) && a.value) || formsDirty(); };
 document.addEventListener('keydown', ev => { if (ev.key === 'Escape' && menuOpen){ menuOpen = false; render(); $('#menubtn').focus(); } });
 document.addEventListener('visibilitychange', () => { if (!document.hidden && !typing() && !pendingActs) refresh(); });
 setInterval(() => { if (!document.hidden && !typing() && !pendingActs) refresh(); }, 2 * 60 * 1000);
