@@ -7,7 +7,7 @@
  * Deploy > Manage deployments > pencil > New version > Deploy, then Dashboard > 1. Set up again.
  */
 
-const VERSION = '3.2';
+const VERSION = '3.3';
 const EDITIONS = ['Personal', 'Couple', 'Family'];
 const ROLES = ['Organizer', 'Member', 'Viewer'];
 const PALETTE = ['#2F6FB2', '#C2185B', '#2E7D32', '#EF6C00', '#6A1B9A', '#00838F', '#8D6E63', '#455A64'];
@@ -89,8 +89,8 @@ const TABS = {
   'Events':      ['ID', 'Date', 'Start time', 'End time', 'Title', 'Where', 'Who', 'Repeats', 'Until', 'Notes', 'Added by'],
   'Outside calendars': ['Name', 'iCal link', 'Whose (optional)', 'Color', 'Show'],
 };
-const LOOKS = ['paper', 'light', 'dark', 'ivory', 'burgundy', 'sky'];
-function lookOf_(v) { v = String(v || '').toLowerCase(); return /ivory/.test(v) ? 'ivory' : /burgundy/.test(v) ? 'burgundy' : /sky|navy/.test(v) ? 'sky' : LOOKS.indexOf(v) >= 0 ? v : 'paper'; }
+const LOOKS = ['sky', 'lavender', 'ivory', 'paper', 'light', 'dark', 'burgundy'];   // the first five are the themes; the rest are older names the app still understands
+function lookOf_(v) { v = String(v || '').toLowerCase(); return /lavender|bellah/.test(v) ? 'lavender' : /ivory|burgundy/.test(v) ? 'ivory' : /sky|navy/.test(v) ? 'sky' : /paper/.test(v) ? 'paper' : 'light'; }
 /** Settings › Logo image link → an inline image (cached 6 hours), so it shows without the viewer needing access to Drive. */
 function logo_(ss) {
   const link = setting_(ss, 'Logo image link');
@@ -134,7 +134,7 @@ const SETTINGS = [
   ['Push service address',  ['', '', ''],                            'For phone notifications: the Cloudflare Worker address (https://….workers.dev). Blank = no notifications. The same Worker can serve several dashboards.'],
   ['Push service secret',   ['', '', ''],                            'Must match SECRET in that Worker. Don\'t share it.'],
   ['Push public key',       ['', '', ''],                            'Must match VAPID_PUBLIC in that Worker.'],
-  ['Look',                  ['Paper', 'Light', 'Light'],                      'Paper, Light, Dark, Ivory & gold, or Burgundy & gold. Each person can change their own in the app.'],
+  ['Look',                  ['Paper', 'Simple', 'Sky & navy'],                'The theme everyone starts with: Sky & navy, Lavender & gold, Ivory & burgundy, Paper or Simple. Each has a light and a dark version; each person picks theirs (and Light/Dark/Auto) in the app under My view.'],
   ['Logo image link',       ['', ''],                                'Optional. A link to a small PNG or JPG (under 70 KB) shown at the top of the app. For a Google Drive file: Share › Anyone with the link, then paste the link here.'],
   ['Tagline',               ['', ''],                                'Optional. A short line under the name, like a date or a motto.'],
   ['Accent color',          ['#50602B', '#2F6FB2'],                  'Any color code, like #2F6FB2.'],
@@ -201,7 +201,7 @@ function buildSettings_(ss, ed) {
   });
   const vals = sh.getDataRange().getValues();
   const rule = (label, list) => { const r = vals.findIndex(x => x[0] === label) + 1; if (r) sh.getRange(r, 2).setDataValidation(SpreadsheetApp.newDataValidation().requireValueInList(list, true).build()); };
-  rule('Edition', EDITIONS); rule('Look', ['Paper', 'Light', 'Dark', 'Ivory & gold', 'Burgundy & gold', 'Sky & navy']); rule('Sign in with', ['Link', 'Link or name + code', 'Name + code only']); rule('Monthly budget shows', ['Dollars', 'Status']);
+  rule('Edition', EDITIONS); rule('Look', ['Sky & navy', 'Lavender & gold', 'Ivory & burgundy', 'Paper', 'Simple']); rule('Sign in with', ['Link', 'Link or name + code', 'Name + code only']); rule('Monthly budget shows', ['Dollars', 'Status']);
   ['Google Calendar', 'Calendar subscriptions', 'Add to calendar buttons'].forEach(l => rule(l, ['On', 'Off']));
   header_(sh, 3);
   sh.setColumnWidth(1, 190); sh.setColumnWidth(2, 300); sh.setColumnWidth(3, 560);

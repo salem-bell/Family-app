@@ -560,7 +560,8 @@ const VIEWS = {
   view(){
     if (!draft){
       const mineL = myFeatures(), rest = enabledFeatures().filter(f => mineL.indexOf(f) < 0);
-      draft = { list: mineL.map(f => [f, true]).concat(rest.map(f => [f, false])), look: (data.view && data.view.look) || '', text: (data.view && data.view.text) || '', mode: (data.view && data.view.mode) || '' };
+      const vw = data.view || {};
+      draft = { list: mineL.map(f => [f, true]).concat(rest.map(f => [f, false])), look: vw.look ? themeOf(vw.look) : '', text: vw.text || '', mode: vw.mode || impliedMode(vw.look || data.look) || 'light' };
     }
     const desc = { 'Calendar':'Events, colored by person', 'Week ahead':'The next 7 days on one screen', 'To-dos':'Checklists', 'Shopping list':'Grouped by store', 'Meal plan':"This week's meals",
       'Routines & chores':'Daily and weekly checklists', 'Home & car upkeep':"What's due around the house", 'Bills & renewals':'Due dates and Paid', 'Budget snapshot':'Spending vs. budget',
@@ -570,9 +571,9 @@ const VIEWS = {
     const rows = draft.list.map(([f, onv], i) => `<div class="vrow"><button class="chk ${onv ? 'on' : ''}" data-vtoggle="${i}" aria-label="Show ${esc(f)}" style="pointer-events:auto;opacity:1">${onv ? '✓' : ''}</button>
       <span class="txt"><b>${esc(f)}</b> <span class="muted sm">${esc(desc[f] || '')}</span></span>
       <button class="mv" data-vmove="${i}" data-dir="-1" ${i === 0 ? 'disabled' : ''} aria-label="Move up">↑</button><button class="mv" data-vmove="${i}" data-dir="1" ${i === draft.list.length - 1 ? 'disabled' : ''} aria-label="Move down">↓</button></div>`).join('');
-    const looks = [['', 'Dashboard default'], ['paper', 'Paper'], ['light', 'Light'], ['dark', 'Dark'], ['ivory', 'Ivory & gold'], ['burgundy', 'Burgundy & gold'], ['sky', 'Sky & navy']];
+    const looks = [['', 'Dashboard default']].concat(THEMES);
     return `<div class="stack" style="max-width:720px;margin:0 auto">${card('My view · ' + esc(data.me.name), `<div class="muted sm" style="padding:10px 14px 4px">Tick what you want on your Today screen and tab bar, and put it in your order. This only changes your view – nobody else's.</div>${rows}`)}
-      ${card('Look', `<div class="row" style="flex-wrap:wrap">${looks.map(([v, n]) => `<button class="btn ${draft.look === v ? 'go' : ''}" data-vlook="${v}">${n}</button>`).join('')}</div><div class="row" style="align-items:center;flex-wrap:wrap"><span class="txt">Light or dark<div class="muted sm">Auto follows your phone or computer.</div></span><span class="seg">${[['', 'As is'], ['light', 'Light'], ['dark', 'Dark'], ['auto', 'Auto']].map(([k, l]) => `<button data-vmode="${k}" aria-pressed="${(draft.mode || '') === k}">${l}</button>`).join('')}</span></div><div class="row"><span class="txt">Larger text</span><button class="chk ${draft.text === 'large' ? 'on' : ''}" data-vtext style="pointer-events:auto;opacity:1" aria-label="Larger text">${draft.text === 'large' ? '✓' : ''}</button></div>`)}
+      ${card('Look', `<div class="row" style="flex-wrap:wrap">${looks.map(([v, n]) => `<button class="btn ${draft.look === v ? 'go' : ''}" data-vlook="${v}">${n}</button>`).join('')}</div><div class="row" style="align-items:center;flex-wrap:wrap"><span class="txt">Light or dark<div class="muted sm">Every theme has both. Auto follows your phone or computer.</div></span><span class="seg">${[['light', 'Light'], ['dark', 'Dark'], ['auto', 'Auto']].map(([k, l]) => `<button data-vmode="${k}" aria-pressed="${(draft.mode || 'light') === k}">${l}</button>`).join('')}</span></div><div class="row"><span class="txt">Larger text</span><button class="chk ${draft.text === 'large' ? 'on' : ''}" data-vtext style="pointer-events:auto;opacity:1" aria-label="Larger text">${draft.text === 'large' ? '✓' : ''}</button></div>`)}
       ${notifCard()}
       <div class="bar" style="border:none;padding:0;justify-content:flex-end"><button class="btn" data-vcancel>Cancel</button><button class="btn go" data-vsave>Save my view</button></div>
       <p class="muted sm">${ro() ? 'Your link is view-only: you can set up your view, but not change anything else. ' : ''}The organizer decides which features this dashboard has; new ones appear here when they're turned on.</p></div>`;
@@ -608,31 +609,34 @@ function viewUnlock(){
 /* =========================================================
    Render
    ========================================================= */
-/** Light/dark/auto: each look has a light and a dark version. */
-function lookFor(look, want){
-  if (!want) return look;
-  const DARK = { sky: 'skynight', paper: 'dark', light: 'dark', ivory: 'burgundy' }, LIGHT = { skynight: 'sky', dark: 'light', burgundy: 'ivory' };
-  return want === 'dark' ? (DARK[look] || look) : (LIGHT[look] || look);
-}
+/** The dashboard's accent color, lifted so it reads on a dark background. */
+function lighten(hex, k){ const m = String(hex).match(/^#?([0-9a-f]{6})$/i); if (!m) return hex; const n = parseInt(m[1], 16); return '#' + [16, 8, 0].map(sh => { const c = (n >> sh) & 255; return Math.round(c + (255 - c) * k).toString(16).padStart(2, '0'); }).join(''); }
+/** Themes: each has a light and a dark version; Light / Dark / Auto picks which. Older single looks map to the nearest theme. */
+const THEMES = [['sky', 'Sky & navy'], ['lavender', 'Lavender & gold'], ['ivory', 'Ivory & burgundy'], ['paper', 'Paper'], ['light', 'Simple']];
+const THEME_DARK = { sky: 'skynight', lavender: 'lavendernight', ivory: 'burgundy', paper: 'papernight', light: 'dark' };
+const themeOf = look => ({ dark: 'light', burgundy: 'ivory', skynight: 'sky', lavendernight: 'lavender', papernight: 'paper' })[look] || (THEME_DARK[look] ? look : '');
+const impliedMode = look => /^(dark|burgundy)$/.test(look || '') ? 'dark' : '';
 if (window.matchMedia) try { window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => { if (data) applyLook(); }); } catch (_) {}
 function applyLook(){
-  const v = data.view || {}, L = ['paper', 'light', 'dark', 'ivory', 'burgundy', 'sky'], want = (draft && draft.look) || v.look;
-  const chosen = L.indexOf(want) >= 0 ? want : (L.indexOf(data.look) >= 0 ? data.look : 'paper');
-  const mode = draft && draft.mode !== undefined ? draft.mode : v.mode || '', sysDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
-  const look = lookFor(chosen, mode === 'dark' || (mode === 'auto' && sysDark) ? 'dark' : mode ? 'light' : '');
-  const brandLook = look === 'ivory' || look === 'burgundy' || look === 'sky' || look === 'skynight';
+  const v = data.view || {}, L = ['paper', 'light', 'dark', 'ivory', 'burgundy', 'sky', 'lavender'], want = (draft && draft.look) || v.look;
+  const chosen = themeOf(want) || themeOf(data.look) || 'sky';
+  const mode = (draft && draft.mode) || v.mode || impliedMode(want || data.look) || 'light', sysDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+  const look = mode === 'dark' || (mode === 'auto' && sysDark) ? THEME_DARK[chosen] : chosen;
+  const brandLook = /^(ivory|burgundy|sky|skynight|lavender|lavendernight)$/.test(look);
   const large = (draft ? draft.text : v.text) === 'large';
-  const cls = look + (look === 'skynight' ? ' sky' : '') + (brandLook ? ' paper' : '') + (large ? ' large' : '') + (ro() ? ' ro' : '') + (document.body.classList.contains('inchat') ? ' inchat' : '');
-  document.body.className = cls; document.documentElement.className = look + (look === 'skynight' ? ' sky' : '') + (large ? ' large' : '');
-  const tc = document.querySelector('meta[name=theme-color]'); if (tc){ const bg = getComputedStyle(document.body).getPropertyValue(look === 'sky' ? '--sky' : '--bg').trim(); if (bg) tc.setAttribute('content', bg); }
-  if (brandLook) document.body.style.removeProperty('--accent'); else document.body.style.setProperty('--accent', data.accent || '#50602B');
-  const lg = $('#logo'); if (data.logo){ if (lg.getAttribute('src') !== data.logo) lg.src = data.logo; lg.hidden = false; } else lg.hidden = true;
+  const twin = look === 'skynight' ? ' sky' : look === 'lavendernight' ? ' lavender' : look === 'papernight' ? ' paper' : '';
+  const cls = look + twin + (brandLook ? ' paper' : '') + (large ? ' large' : '') + (ro() ? ' ro' : '') + (document.body.classList.contains('inchat') ? ' inchat' : '');
+  document.body.className = cls; document.documentElement.className = look + twin + (large ? ' large' : '');
+  const tc = document.querySelector('meta[name=theme-color]'); if (tc){ const bg = getComputedStyle(document.body).getPropertyValue(look === 'sky' ? '--sky' : /^lavender/.test(look) ? '--hbg' : '--bg').trim(); if (bg) tc.setAttribute('content', bg); }
+  if (brandLook) document.body.style.removeProperty('--accent'); else document.body.style.setProperty('--accent', /^(dark|papernight)$/.test(look) ? lighten(data.accent || '#50602B', .38) : (data.accent || '#50602B'));
+  const crest = /^lavender/.test(look) ? (window.FAMILY_API ? 'brand/bellah-crest.png' : 'https://salem-bell.github.io/Family-app/brand/bellah-crest.png') : '';
+  const lg = $('#logo'), logo = data.logo || crest; if (logo){ if (lg.getAttribute('src') !== logo) lg.src = logo; lg.hidden = false; } else lg.hidden = true;
   $('#tagline').textContent = data.tagline || '';
 }
 function render(){
   const now = new Date();
-  if (!data && signInfo && signInfo.name){ const L = ['paper', 'light', 'dark', 'ivory', 'burgundy', 'sky'], lk = L.indexOf(signInfo.look) >= 0 ? signInfo.look : 'paper';
-    document.documentElement.className = lk; document.body.className = lk + (/ivory|burgundy|sky/.test(lk) ? ' paper' : ''); $('#brand').textContent = signInfo.name; document.title = signInfo.name;
+  if (!data && signInfo && signInfo.name){ const L = ['paper', 'light', 'dark', 'ivory', 'burgundy', 'sky', 'lavender'], lk = L.indexOf(signInfo.look) >= 0 ? signInfo.look : 'paper';
+    document.documentElement.className = lk; document.body.className = lk + (/ivory|burgundy|sky|lavender/.test(lk) ? ' paper' : ''); $('#brand').textContent = signInfo.name; document.title = signInfo.name;
     const lg = $('#logo'); if (signInfo.logo){ lg.src = signInfo.logo; lg.hidden = false; } }
   if (!data){ $('#nav').innerHTML = ''; $('#nav').hidden = true; $('#menubtn').hidden = true; $('#me').innerHTML = ''; $('#main').innerHTML = (lastErr === 'nokey' || lastErr === 'badkey' || lastErr === 'expired') ? viewUnlock() : lastErr ? viewProblem() : `<div class="empty">Loading…</div>`; return; }
   applyLook();
