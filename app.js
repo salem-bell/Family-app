@@ -786,7 +786,17 @@ const chatUnread = () => (data.channels || []).reduce((n, c) => n + (c.unread ||
 const AV = ['#015A84', '#2F6FB2', '#5FB4CB', '#6D3640', '#50602B', '#8D6E63'];
 const initials = n => { const w = String(n || '?').trim().split(/\s+/); return ((w[0] || '?')[0] + (w.length > 1 ? w[w.length - 1][0] : '')).toUpperCase(); };
 const avColor = (k, name) => { const p = name && (data.people || []).find(x => x.name === name); if (p && p.color) return p.color; let h = 0; for (const ch of String(k)) h = (h * 31 + ch.charCodeAt(0)) >>> 0; return AV[h % AV.length]; };
-function avatar(c, size){
+const otherId = c => c && c.kind === 'dm' ? String(c.id).split('-').slice(1).find(x => x !== data.meId) : c && !c.kind ? c.id : '';
+const activeMs = id => Number((data.active || {})[id] || 0);
+const isActive = id => !!id && id !== data.meId && Date.now() - activeMs(id) < 5 * 60000;
+function activeLabel(id){
+  const ms = activeMs(id); if (!ms || id === data.meId) return ''; const m = Math.floor((Date.now() - ms) / 60000);
+  if (m < 5) return 'Active now'; if (m < 60) return `Active ${m} min ago`; if (m < 24 * 60 && ymdOf(new Date(ms)) === T()) return `Active ${Math.floor(m / 60)} h ago`;
+  if (ymdOf(new Date(ms)) === plus(T(), -1)) return 'Active yesterday'; if (m < 7 * 1440) return 'Active ' + new Date(ms).toLocaleDateString([], { weekday: 'long' });
+  return m < 60 * 1440 ? 'Active ' + new Date(ms).toLocaleDateString([], { month: 'short', day: 'numeric' }) : '';
+}
+function avatar(c, size){ const h = avatar0(c, size); return isActive(otherId(c)) ? h.replace('class="av', 'class="av on') : h; }
+function avatar0(c, size){
   const st = `style="--av:${esc(avColor(c.id || c.name, c.kind ? '' : c.name))}${size ? ';--sz:' + size + 'px' : ''}"`;
   if (c.kind === 'channel') return `<span class="av ch" ${st} aria-hidden="true">#</span>`;
   if (c.kind === 'group') return `<span class="av grp" ${st} aria-hidden="true"><svg viewBox="0 0 24 24" width="55%" height="55%" fill="currentColor"><circle cx="9" cy="8" r="3.2"/><circle cx="16.5" cy="9" r="2.6"/><path d="M2.5 19c.4-3.6 3.1-5.6 6.5-5.6s6.1 2 6.5 5.6z"/><path d="M15.2 13.6c2.9-.3 5.6 1.3 6.3 5.4h-4.4c-.2-2.2-.9-4-1.9-5.4z"/></svg></span>`;
@@ -836,7 +846,7 @@ function viewChat(){
     <div class="clist">${body}</div></section>${pushHint()}</div>`;
 }
 function convName(){ const c = curChat(); if (c) return c.name; const other = chat.open.split('-').slice(1).find(x => x !== data.meId), p = (data.people || []).find(x => x.id === other); return p ? p.name : chat.dmName || 'Message'; }
-function convSub(c){ if (!c) return ''; if (c.kind === 'channel') return /organi/i.test(c.who) ? 'Organizers only' : ''; if (c.kind === 'group') return c.members.map(first).join(', '); return ''; }
+function convSub(c){ if (!c) return ''; if (c.kind === 'channel') return /organi/i.test(c.who) ? 'Organizers only' : ''; if (c.kind === 'group') { const on = (c.memberIds || []).filter(isActive).map(id => first(((data.people || []).find(p => p.id === id) || {}).name)); return c.members.map(first).join(', ') + (on.length ? ' · ' + on.join(', ') + ' active now' : ''); } return activeLabel(otherId(c)); }
 function viewConversation(){
   const msgs = chat.msgs || [], c = curChat() || { id: chat.open, name: convName(), kind: 'dm' }, multi = c.kind !== 'dm';
   const gap = (a, b) => Math.abs(new Date(b.at) - new Date(a.at)) / 6e4;
@@ -876,7 +886,7 @@ function chatSheet(){
   const pick = ids => `<div class="plist">${people.map(p => `<label class="prow"><input type="checkbox" name="m" value="${esc(p.id)}" ${ids && ids.indexOf(p.id) >= 0 ? 'checked' : ''}> ${avatar({ id: p.id, name: p.name }, 28)} ${esc(p.name)}</label>`).join('')}</div>`;
   let inner;
   if (k === 'new') inner = head('New message') + `<div class="plist"><button class="prow" data-cnewgroup><span class="av grp" style="--av:var(--accent);--sz:28px" aria-hidden="true">+</span> <b>New group</b></button>${isOrg() ? '<button class="prow" data-cnewchannel><span class="av ch" style="--sz:28px" aria-hidden="true">#</span> <b>New channel</b></button>' : ''}</div>
-      <div class="lbl" style="padding:10px 2px 4px">People</div><div class="plist">${people.map(p => `<button class="prow" data-cdm="${esc(p.id)}" data-cdmname="${esc(p.name)}">${avatar({ id: p.id, name: p.name }, 28)} ${esc(p.name)}${p.household && p.household !== p.name ? ` <span class="muted sm">${esc(p.household)}</span>` : ''}</button>`).join('')}</div>`;
+      <div class="lbl" style="padding:10px 2px 4px">People</div><div class="plist">${people.map(p => `<button class="prow" data-cdm="${esc(p.id)}" data-cdmname="${esc(p.name)}">${avatar({ id: p.id, name: p.name }, 28)} <span class="txt">${esc(p.name)}${p.household && p.household !== p.name ? ` <span class="muted sm">${esc(p.household)}</span>` : ''}${activeLabel(p.id) ? `<div class="muted sm">${activeLabel(p.id)}</div>` : ''}</span></button>`).join('')}</div>`;
   else if (k === 'group') inner = head('New group') + `<form data-form="cgroup"><label class="f">Name</label><input class="f-in" name="name" maxlength="40" placeholder="e.g. Reunion planning">${pick([])}<div class="bar" style="border:none;padding:10px 0 0;justify-content:flex-end"><button class="btn go">Create</button></div></form>`;
   else if (k === 'channel') inner = head('New channel') + `<form data-form="cchannel"><label class="f">Name</label><input class="f-in" name="name" maxlength="40" placeholder="e.g. Cousins"><label class="f">Who sees it</label><select class="f-in" name="who"><option>Everyone</option><option>Organizers</option></select><div class="bar" style="border:none;padding:10px 0 0;justify-content:flex-end"><button class="btn go">Create</button></div></form>`;
   else if (k === 'edit' && c) inner = head(c.kind === 'group' ? 'Edit group' : 'Edit channel') + `<form data-form="cedit"><label class="f">Name</label><input class="f-in" name="name" maxlength="40" value="${esc(c.name)}">${c.kind === 'group' ? pick(c.memberIds || []) : `<label class="f">Who sees it</label><select class="f-in" name="who">${['Everyone', 'Organizers'].map(o => `<option ${(/organi/i.test(c.who) ? 'Organizers' : 'Everyone') === o ? 'selected' : ''}>${o}</option>`).join('')}</select>`}<div class="bar" style="border:none;padding:10px 0 0;justify-content:flex-end"><button class="btn go">Save</button></div></form>`;
@@ -894,7 +904,7 @@ async function openChat(id, name, text, photo, opt){
     const r = await runFn('chat', KEY, id, text === undefined ? null : text, photo || null, opt || {});
     if (photo){ const mineP = r.messages.filter(m => m.fromId === r.me && m.photo).pop(); if (mineP && !picCache[mineP.id]){ picCache[mineP.id] = photo; idbPut(mineP.id, photo); } }
     if (chat.open !== id) return;
-    chat.msgs = r.messages; chat.seen = r.seen || []; chat.me = r.me; chat.loaded = id; data.channels = r.channels; save('dash-cache', JSON.stringify(data));
+    chat.msgs = r.messages; chat.seen = r.seen || []; chat.me = r.me; chat.loaded = id; data.channels = r.channels; if (r.active) data.active = r.active; save('dash-cache', JSON.stringify(data));
     const near = isNearBottom(); render(); if (opt && opt.find) jumpTo(opt.find); else if (near || text !== undefined) scrollChat();
   } catch (e) {
     const m = String(e && e.message || e).replace(/^(Error|Exception):\s*/, '');
@@ -1084,9 +1094,14 @@ function pushHint(){
   if (pushOn()) return '';
   return `<p class="muted sm" style="text-align:center">Get a notification when someone writes. <button class="lnk" data-go="view">Turn on notifications</button></p>`;
 }
+function privacyCard(){
+  if (!chatOn() || ro()) return '';
+  const on = ((data.push || {}).prefs || {}).active !== false;
+  return card('Privacy', `<div class="row" style="align-items:center"><span class="txt">Show when I'm active<div class="muted sm">Others see "Active now" or "Active 20 min ago" next to your name in Messages.</div></span><button class="chk ${on ? 'on' : ''}" data-pushactive="${on ? 0 : 1}" style="pointer-events:auto;opacity:1" aria-label="Show when I'm active">${on ? '✓' : ''}</button></div>`);
+}
 function notifCard(){
   const P = data.push || {}, pr = P.prefs || {}, on = pushOn();
-  if (!P.ready) return '';
+  if (!P.ready) return privacyCard();
   let top;
   if (!inPWA()) top = `<div class="row"><span class="txt">Notifications work in the phone app.${data.phoneApp ? ` <a href="${esc(data.phoneApp)}" target="_blank" rel="noopener">Open it</a>, then add it to your Home Screen.` : ''}</span></div>`;
   else if (isIOS() && !standalone()) top = `<div class="row"><span class="txt"><b>First, add the app to your Home Screen</b><div class="muted sm">iPhones only send notifications to apps on the Home Screen. Tap Share <b>⎋</b> in Safari › <b>Add to Home Screen</b> › <b>Add</b>. Then open it from your Home Screen and come back here.</div></span></div>`;
@@ -1095,13 +1110,14 @@ function notifCard(){
   else top = on ? `<div class="row" style="align-items:center"><span class="txt"><b>On for this ${deviceKind()}</b><div class="muted sm">${esc(deviceName())}</div></span><button class="btn sm" data-pushtest>Send a test</button><button class="btn sm" data-pushoff>Turn off</button></div>`
     : `<div class="row" style="align-items:center"><span class="txt"><b>Off on this ${deviceKind()}</b><div class="muted sm">Get a notification for new messages, even when the app is closed.</div></span><button class="btn go" data-pushon>Turn on</button></div>`;
   const msg = pr.msg || 'all';
-  return card('Notifications', top + `<div class="row" style="align-items:center;flex-wrap:wrap"><span class="txt">Messages<div class="muted sm">"Direct only" = private messages, groups and @mentions of you</div></span><span class="seg">${[['all', 'All'], ['direct', 'Direct only'], ['off', 'Off']].map(([k, l]) => `<button data-pushpref="${k}" aria-pressed="${msg === k}">${l}</button>`).join('')}</span></div>`);
+  return privacyCard() + card('Notifications', top + `<div class="row" style="align-items:center;flex-wrap:wrap"><span class="txt">Messages<div class="muted sm">"Direct only" = private messages, groups and @mentions of you</div></span><span class="seg">${[['all', 'All'], ['direct', 'Direct only'], ['off', 'Off']].map(([k, l]) => `<button data-pushpref="${k}" aria-pressed="${msg === k}">${l}</button>`).join('')}</span></div>`);
 }
 document.addEventListener('click', ev => {
   const b = ev.target.closest('button'); if (!b || !data) return; const d = b.dataset;
   if ('pushon' in d){ pushTurnOn(); return; }
   if ('pushoff' in d){ pushTurnOff(); return; }
   if ('pushtest' in d){ act('pushTest', {}).then(() => { if (!lastErr) toast('Test sent'); }); return; }
+  if (d.pushactive !== undefined){ data.push = data.push || {}; data.push.prefs = Object.assign({}, data.push.prefs, { active: d.pushactive === '1' }); render(); act('pushPrefs', { active: d.pushactive }); return; }
   if (d.pushpref){ data.push.prefs = Object.assign({}, data.push.prefs, { msg: d.pushpref }); render(); act('pushPrefs', { msg: d.pushpref }); return; }
 });
 /** Open the screen a notification (or a ?go= link) points at. */

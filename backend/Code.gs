@@ -7,7 +7,7 @@
  * Deploy > Manage deployments > pencil > New version > Deploy, then Dashboard > 1. Set up again.
  */
 
-const VERSION = '3.0';
+const VERSION = '3.1';
 const EDITIONS = ['Personal', 'Couple', 'Family'];
 const ROLES = ['Organizer', 'Member', 'Viewer'];
 const PALETTE = ['#2F6FB2', '#C2185B', '#2E7D32', '#EF6C00', '#6A1B9A', '#00838F', '#8D6E63', '#455A64'];
@@ -50,7 +50,7 @@ const pickEd_ = (arr, ed) => arr[Math.min(ED_INDEX[ed] || 0, arr.length - 1)];
    Sheet layout
    ============================================================ */
 const TABS = {
-  'People':      ['Name', 'Household', 'Role', 'Color', 'Calendar ID (optional)', 'Key (do not edit)', 'App link', 'Active', 'Sign-in code', 'Chat ID (do not edit)', 'Notifications'],
+  'People':      ['Name', 'Household', 'Role', 'Color', 'Calendar ID (optional)', 'Key (do not edit)', 'App link', 'Active', 'Sign-in code', 'Chat ID (do not edit)', 'Notifications', 'Last active'],
   'To-dos':      ['ID', 'List', 'To-do', 'Done', 'Order', 'Done at', 'For', 'Added by'],
   'Shopping':    ['Item', 'Qty', 'Added by', 'Got it', 'Got at', 'Store'],
   'Meals':       ['Date', 'Meal', 'What', 'Cook'],
@@ -464,6 +464,7 @@ function api(key, p) {
   const ss = SpreadsheetApp.getActive();
   const me = whoIs_(ss, key);
   if (!me) throw new Error('unauthorized');
+  touch_(ss, me);
   p = p || {};
   if (p.action) {
     if (me.role === 'Viewer' && !/^(saveView|push(Sub|Unsub|Prefs|Test))$/.test(p.action)) throw new Error('This link is view-only');
@@ -520,7 +521,7 @@ function state_(ss, me) {
   out.market    = run('Marketplace', () => market_(ss, tz, today));
   out.stories   = run('Stories', () => stories_(ss));
   if (out.market) out.regions = splitList_(setting_(ss, 'Regions'));
-  if (on['Messages'] && me.id) { try { out.meId = me.id; out.channels = channels_(ss, me); } catch (e) { errors.push('Messages: ' + e.message); } }
+  if (on['Messages'] && me.id) { try { out.meId = me.id; out.channels = channels_(ss, me); out.active = activeMap_(ss, me); } catch (e) { errors.push('Messages: ' + e.message); } }
   out.push = pushInfo_(ss, me);
   out.phoneApp = /^https:\/\//.test(setting_(ss, 'Phone app address')) ? setting_(ss, 'Phone app address') : '';
   return out;
@@ -1566,6 +1567,7 @@ function chatAuth_(key) {
   if (!config_(ss).features['Messages']) throw new Error('Messages are turned off for this dashboard');
   if (!ss.getSheetByName('Messages')) throw new Error('The Messages tabs are missing. Ask the organizer to run Dashboard › 1. Set up.');
   const me = chatMe_(ss, me0); if (!me.id) throw new Error('You need a chat ID – ask the organizer to run Dashboard › 1. Set up.');
+  touch_(ss, me);
   return { ss, me };
 }
 function canSee_(ss, me, channel) {
@@ -1616,7 +1618,7 @@ function chat(key, channel, text, photo, opt) {
       reply: rt ? (orig ? snip(orig) : { id: rt, from: '', text: 'Older message', photo: 0 }) : null, acks: acks.map(x => byId[x]), ackMine: acks.indexOf(me.id) >= 0 ? 1 : 0 }; });
   const active = {}; ppl.filter(r => truthy_(r[7])).forEach(r => { active[String(r[9])] = 1; });
   const seen = rows_(ss, 'Chat reads').filter(r => String(r[1]) === channel && String(r[0]) !== me.id && active[String(r[0])]).map(r => ({ name: byId[String(r[0])], at: isoOf_(r[2]) }));
-  return { ok: true, channel, me: me.id, messages, seen, more: from > 0 ? 1 : 0, channels: channels_(ss, me) };
+  return { ok: true, channel, me: me.id, messages, seen, more: from > 0 ? 1 : 0, channels: channels_(ss, me), active: activeMap_(ss, me) };
 }
 /** Search the recent messages (last 3,000) in every conversation this person can see. */
 function chatSearch(key, q) {
@@ -1705,7 +1707,7 @@ function cleanPhotos_(ss) {
    (the same Worker the Peregrine app uses can be shared).
    People › Notifications: msg=all | direct | off   (direct = private messages, groups and @mentions)
    ============================================================ */
-function pushPrefs_(r) { const m = String(r && r[10] || '').match(/msg=(all|direct|off)/); return { msg: m ? m[1] : 'all' }; }
+function pushPrefs_(r) { const s = String(r && r[10] || ''), m = s.match(/msg=(all|direct|off)/); return { msg: m ? m[1] : 'all', active: !/active=0/.test(s) }; }
 function pushInfo_(ss, me) {
   const key = setting_(ss, 'Push public key'), ready = !!(setting_(ss, 'Push service address') && key);
   const r = rows_(ss, 'People').find(x => String(x[0]) === me.name);
@@ -1732,7 +1734,10 @@ function pushAct_(ss, p, me0) {
     }
     case 'pushPrefs': {
       const ps = ss.getSheetByName('People'), v = rows_(ss, 'People'), i = v.findIndex(r => String(r[0]) === me.name); if (i < 0) return;
-      if (/^(all|direct|off)$/.test(String(p.msg || ''))) ps.getRange(i + 2, 11).setValue('msg=' + p.msg);
+      const P = pushPrefs_(v[i]);
+      if (/^(all|direct|off)$/.test(String(p.msg || ''))) P.msg = String(p.msg);
+      if (p.active === '1' || p.active === '0') P.active = p.active === '1';
+      ps.getRange(i + 2, 11).setValue('msg=' + P.msg + ';active=' + (P.active ? 1 : 0));
       return;
     }
     case 'pushTest': {
@@ -1784,4 +1789,27 @@ function pushChat_(ss, me, channel, text, photo) {
   push_(ss, ids.map(uid => { const r = people.find(x => String(x[9]) === uid), m = !direct && r && mentions_(text, String(r[0]), all);
     return { uid, kind: 'msg', direct: direct || m, title: m ? who + ' mentioned you in # ' + c.name : c.kind === 'dm' ? me.name : c.kind === 'group' ? who + ' · ' + c.name : '# ' + c.name + ' · ' + who,
       body: text ? text.slice(0, 200) : '📷 Photo', url: '?go=chat:' + channel, tag: 'chat-' + channel }; }));
+}
+
+/* ============================================================
+   "Last active": kept in the script cache (cheap, every request) and written to People › Last active at most every 10 minutes.
+   Anyone can hide theirs (My view › Show when I'm active); you always see your own.
+   ============================================================ */
+function touch_(ss, me) {
+  if (!me || !me.id) return;
+  try {
+    const c = CacheService.getScriptCache(), now = Date.now();
+    if (now - Number(c.get('seen_' + me.id) || 0) < 30000) return;
+    c.put('seen_' + me.id, String(now), 21600);
+    if (now - Number(c.get('seenp_' + me.id) || 0) < 600000) return;
+    c.put('seenp_' + me.id, String(now), 21600);
+    const sh = ss.getSheetByName('People'); if (sh.getLastColumn() < TABS.People.length) buildTab_(ss, 'People');
+    const i = colValues_(sh, 1).indexOf(me.name); if (i >= 1) sh.getRange(i + 1, 12).setValue(new Date(now));
+  } catch (e) {}
+}
+function activeMap_(ss, me) {
+  const live = rows_(ss, 'People').filter(r => r[0] && r[9] && truthy_(r[7])), out = {};
+  let c = {}; try { c = CacheService.getScriptCache().getAll(live.map(r => 'seen_' + r[9])); } catch (e) {}
+  live.forEach(r => { const id = String(r[9]); if (id !== me.id && !pushPrefs_(r).active) return; const ms = Math.max(Number(c['seen_' + id] || 0), toMs_(r[11])); if (ms) out[id] = ms; });
+  return out;
 }
