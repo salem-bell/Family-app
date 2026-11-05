@@ -1,6 +1,6 @@
 # Bellah Family HQ – phone app
 
-The installable phone app for the family dashboard. It opens at **https://salem-bell.github.io/Family-App/**.
+The installable phone app for the family dashboard. It opens at **https://salem-bell.github.io/Family-app/**.
 
 - **This repo** holds only the app's shell (the page, code and icons). Nothing private lives here.
 - **The data** stays in the *Family Dashboard* Google Sheet, behind each person's first name and 4-digit code.
