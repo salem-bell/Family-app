@@ -7,7 +7,7 @@
  * Deploy > Manage deployments > pencil > New version > Deploy, then Dashboard > 1. Set up again.
  */
 
-const VERSION = '3.1';
+const VERSION = '3.2';
 const EDITIONS = ['Personal', 'Couple', 'Family'];
 const ROLES = ['Organizer', 'Member', 'Viewer'];
 const PALETTE = ['#2F6FB2', '#C2185B', '#2E7D32', '#EF6C00', '#6A1B9A', '#00838F', '#8D6E63', '#455A64'];
@@ -469,7 +469,23 @@ function api(key, p) {
   if (!me) throw new Error('unauthorized');
   touch_(ss, me);
   p = p || {};
-  if (p.action) {
+  let results = null;
+  if (Array.isArray(p.actions)) {                    // v3.2: the app's save queue – several changes, one lock, one read back
+    const cache = CacheService.getScriptCache(), lock = LockService.getScriptLock();
+    lock.waitLock(25000);
+    try {
+      results = p.actions.slice(0, 40).map(a => {
+        a = a || {}; const op = String(a.op || '').slice(0, 40), k = op ? 'op_' + op : '';
+        if (k && cache.get(k)) return { op, ok: true, dup: true };   // already saved (the first try timed out on the phone)
+        try {
+          if (me.role === 'Viewer' && !/^(saveView|push(Sub|Unsub|Prefs|Test))$/.test(a.action)) throw new Error('This sign-in is view-only');
+          memoReset_(false); act_(ss, a, me); SpreadsheetApp.flush();
+          if (k) cache.put(k, '1', 21600);
+          return { op, ok: true };
+        } catch (e) { if (k) cache.put(k, '1', 21600); return { op, error: String(e && e.message || e) }; }
+      });
+    } finally { lock.releaseLock(); }
+  } else if (p.action) {
     if (me.role === 'Viewer' && !/^(saveView|push(Sub|Unsub|Prefs|Test))$/.test(p.action)) throw new Error('This link is view-only');
     const lock = LockService.getScriptLock();
     lock.waitLock(20000);
@@ -480,7 +496,7 @@ function api(key, p) {
     if (lock.tryLock(8000)) lock.releaseLock();
   }
   memoReset_(true);                                  // the read below can reuse each tab it has already read
-  try { return state_(ss, me); } finally { memoReset_(false); }
+  try { const out = state_(ss, me); if (results) out.results = results; return out; } finally { memoReset_(false); }
 }
 
 /* ============================================================

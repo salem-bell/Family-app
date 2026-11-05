@@ -45,12 +45,13 @@ function runFn(name, ...args){
 function loadSignInfo(){ if (signInfo) return; signInfo = { loading: true }; runFn('signInInfo').then(i => { signInfo = i || {}; render(); }, () => { signInfo = {}; render(); }); }
 async function refresh(p){
   if (!KEY){ data = null; lastErr = 'nokey'; loadSignInfo(); render(); return; }
+  if (!(p && p.action) && outbox.length && queueOK()){ scheduleFlush(0); return; }   // saving first brings back the fresh picture anyway
   const isAct = !!(p && p.action), seq = ++seqStarted;
   if (isAct){ pendingActs++; lastActSeq = seq; }
   let got = null, err = null;
   try { got = await call(p || {}); } catch (e) { err = e; }
   if (isAct) pendingActs--;
-  const stale = seq < seqShown || (!isAct && pendingActs > 0) || (isAct && seq !== lastActSeq);
+  const stale = seq < seqShown || (!isAct && pendingActs > 0) || (isAct && seq !== lastActSeq) || (!err && outbox.length > 0 && queueOK());
   if (stale && !err){ if (isAct && !pendingActs && seq === lastActSeq) refresh(); return; }
   if (err && isAct && pendingActs){ toast("Couldn't save: " + String(err && err.message || err).replace(/^(Error|Exception):\s*/, '')); return; }
   seqShown = seq;
@@ -75,7 +76,6 @@ async function refresh(p){
   busy = {};
   try { render(); } catch (e) { data = null; lastErr = 'mismatch'; lastMsg = 'The page could not show this data: ' + (e && e.message || e); render(); }
 }
-const act = (action, params) => refresh(Object.assign({ action }, params));
 
 /* =========================================================
    Helpers
@@ -1153,6 +1153,115 @@ function goTo(go){
 if ('serviceWorker' in navigator && inPWA()) navigator.serviceWorker.addEventListener('message', e => { if (e.data && e.data.go !== undefined) goTo(e.data.go); });
 
 /* =========================================================
+   Save queue (v3.2): every change shows on screen at once, is kept on this device,
+   and goes to Google in the background – several at a time, retried if the phone is offline.
+   ========================================================= */
+let outbox = (() => { try { return JSON.parse(load('dash-outbox') || '[]') || []; } catch (_) { return []; } })();
+let flushing = false, flushT = 0, retryMs = 0, saveState = '';
+const WAIT_FOR_SERVER = /^(push(Sub|Unsub|Test)|newChannel|deleteMessage)$/;     // these need Google's answer before they make sense
+const queueOK = () => !!data && Number(data.version) >= 3.2;
+const keepOutbox = () => save('dash-outbox', JSON.stringify(outbox));
+const newOp = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+function act(action, params){
+  if (WAIT_FOR_SERVER.test(action) || !queueOK()) return refresh(Object.assign({ action }, params));
+  const item = { op: newOp(), action, params: params || {} };
+  try { patch(action, item.params, item.op); } catch (_) {}            // show it now
+  outbox.push(item); keepOutbox(); if (data) save('dash-cache', JSON.stringify(data));
+  render(); showSaving(); scheduleFlush(350);
+  return Promise.resolve();
+}
+function scheduleFlush(ms){ clearTimeout(flushT); flushT = setTimeout(flush, ms); }
+async function flush(){
+  if (flushing || !outbox.length || !KEY) { showSaving(); return; }
+  flushing = true; showSaving();
+  const batch = outbox.slice(0, 25);
+  let got = null, err = null;
+  try { got = await call({ actions: batch.map(x => Object.assign({}, x.params, { action: x.action, op: x.op })) }); } catch (e) { err = e; }
+  flushing = false;
+  if (err){
+    const msg = String(err && err.message || err);
+    if (/unauthorized|expired/.test(msg)){ refresh(); return; }                  // sign-in screen; the queue waits for the next sign-in
+    retryMs = Math.min(retryMs ? retryMs * 2 : 5000, 60000); saveState = 'retry'; showSaving(); scheduleFlush(retryMs); return;
+  }
+  retryMs = 0;
+  const done = {}; batch.forEach(x => { done[x.op] = 1; });
+  outbox = outbox.filter(x => !done[x.op]); keepOutbox();
+  const failed = (got && got.results || []).filter(r => r.error);
+  if (failed.length) toast("Couldn't save: " + failed[0].error.replace(/^(Error|Exception):\s*/, '') + (failed.length > 1 ? ` (+${failed.length - 1} more)` : ''));
+  if (outbox.length){ scheduleFlush(50); return; }                               // more came in meanwhile: send them, then take Google's picture
+  if (got && got.me && got.order){ data = got; lastErr = null; save('dash-cache', JSON.stringify(data)); busy = {}; }
+  saveState = 'saved'; showSaving(); setTimeout(() => { if (saveState === 'saved'){ saveState = ''; showSaving(); } }, 1500);
+  try { render(); } catch (_) {}
+}
+function showSaving(){
+  let el = document.getElementById('saving'); if (!el){ el = document.createElement('div'); el.id = 'saving'; el.setAttribute('role', 'status'); document.body.appendChild(el); }
+  const n = outbox.length;
+  const t = n ? (saveState === 'retry' ? `Offline – ${n} change${n > 1 ? 's' : ''} will save when you're back online` : 'Saving…') : saveState === 'saved' ? 'Saved ✓' : '';
+  el.textContent = t; el.className = t ? (saveState === 'retry' && n ? 'show warn' : 'show') : '';
+}
+// Leaving the app with changes still queued: hand them to the browser to deliver (the phone app only). Duplicates are ignored by the server.
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden && outbox.length && window.FAMILY_API && navigator.sendBeacon){
+    try { navigator.sendBeacon(window.FAMILY_API, JSON.stringify({ fn: 'api', args: [KEY, { actions: outbox.slice(0, 25).map(x => Object.assign({}, x.params, { action: x.action, op: x.op })) }] })); } catch (_) {}
+  } else if (!document.hidden && outbox.length) scheduleFlush(200);
+});
+window.addEventListener('online', () => { if (outbox.length){ retryMs = 0; scheduleFlush(100); } });
+// Something just added can't be changed until Google has given it its real ID (a second or two).
+['click', 'submit'].forEach(t => document.addEventListener(t, ev => {
+  const el = t === 'click' ? ev.target.closest && ev.target.closest('button') : ev.target;
+  if (!el || !el.dataset) return;
+  if (Object.values(el.dataset).some(v => /^tmp[0-9a-z]{12,}$/.test(String(v)))){ ev.preventDefault(); ev.stopImmediatePropagation(); toast('Still saving that – one moment'); }
+}, true));
+
+/** What each change looks like on screen before Google confirms it. */
+function patch(A, p, op){
+  const me = data.me.name, tmp = 'tmp' + op, nowIso = new Date().toISOString(), T0 = T();
+  const byId = (list, id) => (list || []).find(x => String(x.id) === String(id));
+  const byRow = (list, row) => (list || []).find(x => String(x.row) === String(row));
+  switch (A){
+    case 'toggleTask': if (data.tasks){ const t = byId(data.tasks.open, p.id); if (t){ data.tasks.open = data.tasks.open.filter(x => x !== t); data.tasks.doneToday = (data.tasks.doneToday || 0) + 1; } } return;
+    case 'addTask': if (data.tasks && !data.tasks.open.some(x => String(x.id).indexOf('new') === 0 && x.text === p.text)) data.tasks.open.push({ id: tmp, list: p.list, text: p.text, order: 1e15, for: p.for || '', by: me }); else if (data.tasks){ const t = data.tasks.open.find(x => String(x.id).indexOf('new') === 0 && x.text === p.text); if (t) t.id = tmp; } return;
+    case 'addEvent': {
+      if (!data.events) return; const who = String(p.who || '').split(/,\s*/).filter(Boolean);
+      const start = p.time ? new Date(p.date + 'T' + p.time) : null, end = start ? (p.end ? new Date(p.date + 'T' + p.end) : new Date(start.getTime() + 36e5)) : null;
+      data.events.push({ id: tmp, key: tmp, src: 'app', title: p.title, cal: 'Dashboard', color: who[0] ? colorOf(who[0]) : '', who, start: start ? start.toISOString() : p.date, end: end ? end.toISOString() : plus(p.date, 1),
+        allDay: !p.time, location: p.where || '', notes: p.notes || '', day: p.date, done: false, series: { date: p.date, time: p.time || '', end: p.end || '', repeats: p.repeats || '', until: p.until || '', who: p.who || '' } });
+      data.events.sort((a, b) => a.day.localeCompare(b.day) || (a.allDay === b.allDay ? new Date(a.start) - new Date(b.start) : a.allDay ? -1 : 1)); return;
+    }
+    case 'editEvent': (data.events || []).filter(e => e.key === p.id).forEach(e => { e.title = p.title; e.location = p.where || ''; e.notes = p.notes || '';
+      if (!e.series || !e.series.repeats){ e.day = p.date; e.allDay = !p.time; e.start = p.time ? new Date(p.date + 'T' + p.time).toISOString() : p.date; e.end = p.time ? new Date(p.date + 'T' + (p.end || p.time)).toISOString() : plus(p.date, 1); } }); return;
+    case 'addNote': (data.notes = data.notes || []).unshift({ row: tmp, at: nowIso, from: me, text: p.text, pin: p.pin === '1' }); return;
+    case 'pinNote': { const n = byRow(data.notes, p.row); if (n) n.pin = !n.pin; return; }
+    case 'deleteNote': data.notes = (data.notes || []).filter(n => String(n.row) !== String(p.row)); return;
+    case 'addTrip': (data.trips = data.trips || []).push({ trip: p.trip, start: p.start, end: p.end || p.start, days: daysTo(p.start), where: p.where || '', links: [], notes: '', items: [] }); data.trips.sort((a, b) => (a.start || '9').localeCompare(b.start || '9')); return;
+    case 'addTripItem': { const t = (data.trips || []).find(x => x.trip === p.trip); if (t) t.items.push({ row: tmp, trip: p.trip, item: p.item, type: p.type || 'Before you go', who: p.for || '', done: false }); return; }
+    case 'tripItem': (data.trips || []).forEach(t => { const i = byRow(t.items, p.row); if (i) i.done = p.done === '1'; }); return;
+    case 'addGathering': (data.gatherings = data.gatherings || []).push({ id: tmp, title: p.title, date: p.date, time: p.time || '', start: p.time ? new Date(p.date + 'T' + p.time).toISOString() : '', where: p.where || '', host: '', details: p.details || '', by: '', days: daysTo(p.date), rsvps: [], mine: null, headcount: 0, bring: [] });
+      data.gatherings.sort((a, b) => a.date.localeCompare(b.date) || String(a.time).localeCompare(String(b.time))); return;
+    case 'rsvp': { const g = byId(data.gatherings, p.id); if (!g) return; g.rsvps = (g.rsvps || []).filter(r => r.who !== me).concat({ who: me, answer: p.answer, count: Number(p.count) || 1, note: '' }); g.mine = { who: me, answer: p.answer, count: Number(p.count) || 1 };
+      g.headcount = g.rsvps.filter(r => r.answer === 'Yes').reduce((n, r) => n + Math.max(1, r.count), 0); return; }
+    case 'bringAdd': { const g = byId(data.gatherings, p.id); if (g) g.bring.push({ row: tmp, id: p.id, item: p.item, who: p.mine === '1' ? me : '', by: me }); return; }
+    case 'bringClaim': (data.gatherings || []).forEach(g => { const b = byRow(g.bring, p.row); if (b) b.who = p.undo === '1' ? '' : me; }); return;
+    case 'addPoll': (data.polls = data.polls || []).unshift({ id: tmp, question: p.question, closes: p.closes || '', open: true, by: me, multiple: p.multiple === '1', options: String(p.options).split('\n').filter(Boolean).map(text => ({ text, voters: [] })), mine: [], voters: 0 }); return;
+    case 'vote': { const pl = byId(data.polls, p.id); if (!pl) return;
+      const had = pl.options.some(o => o.text === p.choice && o.voters.indexOf(me) >= 0);
+      pl.options.forEach(o => { if (o.text === p.choice) o.voters = had ? o.voters.filter(v => v !== me) : o.voters.concat(me); else if (!pl.multiple) o.voters = o.voters.filter(v => v !== me); });
+      pl.mine = pl.options.filter(o => o.voters.indexOf(me) >= 0).map(o => o.text);
+      pl.voters = [...new Set([].concat(...pl.options.map(o => o.voters)))].length; return; }
+    case 'marketPost': (data.market = data.market || []).unshift({ id: tmp, posted: nowIso, from: me, type: p.type === 'Need help' ? 'Need help' : 'Giving away', what: p.what, details: p.details || '', region: p.region || '', status: 'Open', taker: '', phone: '', updated: Date.now() }); return;
+    case 'marketReopen': { const m = byId(data.market, p.id); if (m){ m.status = 'Open'; m.taker = ''; } return; }
+    case 'marketDone': { const m = byId(data.market, p.id); if (m) m.status = 'Done'; return; }
+    case 'storyPost': (data.stories = data.stories || []).unshift({ id: tmp, posted: nowIso, from: me, title: p.title, story: p.story, about: p.about || '', when: p.when || '', photo: p.photo || '' }); return;
+    case 'addRecipe': (data.recipes = data.recipes || []).push({ name: p.name, from: p.from || '', category: p.category || '', ingredients: p.ingredients || '', steps: p.steps || '', link: p.link || '', id: tmp });
+      data.recipes.sort((a, b) => (a.category || '~').localeCompare(b.category || '~') || a.name.localeCompare(b.name)); return;
+    case 'addShop': { const s = (data.shopping || []).find(x => x.row === 0 && x.item === p.item); if (s) s.row = tmp; return; }
+    case 'billPaid': { const b = byRow(data.bills, p.row); if (b) b.paid = p.undo !== '1'; return; }
+    case 'addMeal': (data.meals = data.meals || []).push({ date: p.date || T0, meal: p.meal || '', what: p.what, cook: p.cook || '' }); return;
+    case 'addIdea': if (data.dateNights) (data.dateNights.ideas = data.dateNights.ideas || []).push({ row: tmp, idea: p.idea, cost: p.cost || '', tried: false }); return;
+  }
+}
+
+/* =========================================================
    Half-typed forms survive every redraw (refreshes, other people's changes, saving something else).
    A form that was just submitted is left to clear itself.
    ========================================================= */
@@ -1204,5 +1313,5 @@ let pendingGo = (() => { try { const g = new URLSearchParams(location.search).ge
   const k = await readKeyFromLink();
   if (k && k !== KEY && !/^S\./.test(KEY)){ KEY = k; save('dash-key', k); try { localStorage.removeItem('dash-cache'); } catch(_){} }
   if (KEY){ try { const c = load('dash-cache'); if (c) data = JSON.parse(c); } catch(_){} }
-  render(); if (!data && KEY) step('asking Google – the first load can take up to 45 seconds'); refresh();
+  render(); if (!data && KEY) step('asking Google – the first load can take up to 45 seconds'); refresh(); if (outbox.length) showSaving();
 })();
