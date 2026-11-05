@@ -291,7 +291,7 @@ const TODAY = {
   'Important dates': () => { const s = (data.dates || []).filter(d => d.days <= 14); return s.length ? card('Coming up', s.map(d => `<div class="row"><span class="txt">${esc(d.name)}${d.years ? ` <span class="muted">(${d.years})</span>` : ''}</span><span class="due">${inDays(d.days)}</span></div>`).join('')) : ''; },
   'Notes board': () => { const p = (data.notes || []).filter(n => n.pin).slice(0, 3); return p.length ? card('Pinned notes', p.map(n => `<div class="row"><span class="txt">${esc(n.text)} <span class="muted sm">— ${esc(n.from)}</span></span></div>`).join(''), `<button class="btn sm" data-go="notes">All</button>`) : ''; },
   'Gatherings': () => { const g = (data.gatherings || []).filter(x => x.days >= 0 && x.days <= 30).slice(0, 3); return g.length ? card('Gatherings', g.map(x => `<div class="row"><span class="txt"><b>${esc(x.title)}</b><div class="muted sm">${gWhen(x)}${x.headcount ? ' · ' + x.headcount + ' coming' : ''}</div></span>${x.mine ? `<span class="tag">${esc(x.mine.answer)}</span>` : ro() ? '' : `<button class="btn sm go" data-go="gatherings">RSVP</button>`}</div>`).join(''), `<button class="btn sm" data-go="gatherings">All</button>`) : ''; },
-  'Polls': () => { const p = (data.polls || []).filter(x => x.open && !x.mine.length); return p.length && !ro() ? card('Your vote is needed', p.slice(0, 3).map(x => `<div class="row"><span class="txt">${esc(x.question)}<div class="muted sm">${x.voters} voted${x.closes ? ' · closes ' + inDays(daysTo(x.closes)) : ''}</div></span><button class="btn sm go" data-go="polls">Vote</button></div>`).join('')) : ''; },
+  'Polls': () => '',   // open polls are pinned above the cards instead (see pinnedPolls)
   'Marketplace': () => { const m = (data.market || []).filter(x => x.status === 'Open' && x.from !== data.me.name && (!myRegion() || !x.region || x.region === myRegion())).slice(0, 3); return m.length ? card('Marketplace' + (myRegion() ? ' · ' + esc(myRegion()) : ''), m.map(x => `<div class="row"><span class="txt"><span class="tag ${x.type === 'Need help' ? 'help' : 'give'}">${x.type === 'Need help' ? 'Needs help' : 'Free'}</span> ${esc(x.what)}<div class="muted sm">${esc(x.from)}${x.region ? ' · ' + esc(x.region) : ''}</div></span></div>`).join(''), `<button class="btn sm" data-go="market">All</button>`) : ''; },
   'Stories': () => { const st = (data.stories || [])[0]; return st ? card('Latest story', `<div class="row" style="display:block"><b>${esc(st.title)}</b><div class="muted sm">${esc(st.from)}${st.when ? ' · ' + esc(st.when) : ''}</div><div style="margin-top:4px">${esc(st.story.slice(0, 160))}${st.story.length > 160 ? '…' : ''}</div></div>`, `<button class="btn sm" data-go="stories">Read</button>`) : ''; },
   'Links': () => { const p = (data.links || []).filter(l => l.pin); return p.length ? card('Pinned links', p.map(linkRow).join('')) : ''; },
@@ -315,7 +315,14 @@ function viewToday(now){
   const nf = newFeatures();
   const banner = nf.length ? `<div class="banner">New on this dashboard: <b>${nf.map(esc).join(', ')}</b>. <button class="btn sm" data-go="view">Add to my view</button> <button class="btn sm" data-dismiss>Not now</button></div>` : '';
   const cards = feats.map(f => TODAY[f] ? TODAY[f](now) : '').filter(Boolean);
-  return banner + head + `<div class="grid">${cards.join('') || card('Today', empty('Nothing needs you right now.'))}</div>`;
+  return banner + head + pinnedPolls() + `<div class="grid">${cards.join('') || card('Today', empty('Nothing needs you right now.'))}</div>`;
+}
+/** Open polls stay pinned to the top of Today (for everyone, whatever is in their view) until they close. Ones you haven't voted on come first. */
+function pinnedPolls(){
+  const open = (data.polls || []).filter(p => p.open).sort((a, b) => (a.mine.length ? 1 : 0) - (b.mine.length ? 1 : 0) || String(a.closes || '9999').localeCompare(String(b.closes || '9999')));
+  if (!open.length) return '';
+  const todo = open.filter(p => !p.mine.length).length;
+  return `<div class="pinhead lbl"><span>📌 Open poll${open.length > 1 ? 's' : ''}${todo && !ro() ? ` · <b>${todo} need${todo === 1 ? 's' : ''} your vote</b>` : ''}</span>${myFeatures().indexOf('Polls') >= 0 ? '<button class="btn sm" data-tab="polls">All polls</button>' : ''}</div><div class="grid pinned">${open.map(pollCard).join('')}</div>`;
 }
 
 /* =========================================================
