@@ -963,11 +963,25 @@ function shrinkPhoto(file){
     img.src = url;
   });
 }
-function zoomPic(src){
+function zoomPic(src, m){
   const box = document.createElement('div'); box.className = 'lightbox'; box.setAttribute('role', 'dialog'); box.setAttribute('aria-label', 'Photo');
-  box.innerHTML = `<img src="${src}" alt="Photo"><button type="button" class="btn sm">Close</button>`;
-  box.addEventListener('click', () => box.remove()); document.addEventListener('keydown', function k(e){ if (e.key === 'Escape'){ box.remove(); document.removeEventListener('keydown', k); } });
-  document.body.appendChild(box);
+  box.innerHTML = `<img src="${src}" alt="Photo${m ? ' from ' + esc(m.from) : ''}"><div class="lbbtns"><button type="button" class="btn go" data-lbsave>Save photo</button><button type="button" class="btn" data-lbclose>Close</button></div>`;
+  const close = () => { box.remove(); document.removeEventListener('keydown', k); };
+  function k(e){ if (e.key === 'Escape') close(); }
+  box.addEventListener('click', e => { if (e.target.closest('[data-lbsave]')){ savePhoto(src, m); return; } if (e.target.tagName !== 'IMG' || e.target === e.currentTarget) close(); });
+  document.addEventListener('keydown', k); document.body.appendChild(box);
+}
+/** Save a chat photo: the share sheet on phones (iPhone: "Save Image" puts it in Photos), a normal download elsewhere. */
+async function savePhoto(src, m){
+  const day = m && m.at ? ymdOf(new Date(m.at)) : T(), name = ((data && data.name) || 'Family') + ' photo' + (m && m.from ? ' – ' + first(m.from) : '') + ' ' + day + '.jpg';
+  let blob; try { blob = await (await fetch(src)).blob(); } catch (_) { toast('Couldn\'t read that photo'); return; }
+  const file = new File([blob], name.replace(/[\\/:*?"<>|]/g, '-'), { type: blob.type || 'image/jpeg' });
+  const phone = /iphone|ipad|android/i.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  if (phone && navigator.canShare && navigator.canShare({ files: [file] })){
+    try { await navigator.share({ files: [file] }); return; } catch (e) { if (e && e.name === 'AbortError') return; }
+  }
+  const url = URL.createObjectURL(blob), a = document.createElement('a'); a.href = url; a.download = file.name; document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 4000); toast('Photo saved');
 }
 // The handler sits on the input itself: the chat redraws every few seconds and swaps the input out.
 async function pickPhoto(inp){
@@ -1004,7 +1018,7 @@ document.addEventListener('click', ev => {
   if (d.openfind){ const [c, id] = d.openfind.split('|'); openChat(c, null, undefined, undefined, { find: id }); return; }
   if ('cclear' in d){ chat.q = ''; chat.results = null; render(); const el = $('[data-csearch]'); if (el) el.focus(); return; }
   if (d.cment){ const t = $('.composer textarea'); if (t){ const pos = t.selectionStart, before = t.value.slice(0, pos).replace(/@[\w]*$/, '@' + d.cment + ' '); t.value = before + t.value.slice(pos); t.focus(); t.setSelectionRange(before.length, before.length); } $('#ment').hidden = true; return; }
-  if (d.cpic){ const m = (chat.msgs || []).find(x => x.id === d.cpic), src = (m && m.local) || picCache[d.cpic]; if (src) zoomPic(src); else { delete picLoading[d.cpic]; loadPic(d.cpic); } return; }
+  if (d.cpic){ const m = (chat.msgs || []).find(x => x.id === d.cpic), src = (m && m.local) || picCache[d.cpic]; if (src) zoomPic(src, m); else { delete picLoading[d.cpic]; loadPic(d.cpic); } return; }
   if ('cunphoto' in d){ const t = $('.composer textarea'); if (t) chat.compose = t.value; chat.photo = ''; render(); return; }
   if (d.cdel){ if (!confirm('Delete this message?')) return; chat.msgs = chat.msgs.filter(m => m.id !== d.cdel); chat.meta = ''; render(); act('deleteMessage', { id: d.cdel }).then(() => { if (chat.open) openChat(chat.open); }); return; }
 });
