@@ -163,6 +163,7 @@ function setup() {
   writeStartHere_(ss);
   buildSettings_(ss, ed);
   buildFeatures_(ss, ed);
+  fixColumns_(ss, 'People');
   buildTab_(ss, 'People', ed, legacyPeople);
   migrateV1People_(ss);
   const on = config_(ss).features;
@@ -320,6 +321,7 @@ function migrateV1People_(ss) {
 
 function ensureKeys_(ss, regenerateAll) {
   const sh = ss.getSheetByName('People'); if (!sh) return;
+  fixColumns_(ss, 'People');
   const vals = rows_(ss, 'People');
   vals.forEach((r, i) => {
     if (!r[0]) return;
@@ -443,6 +445,7 @@ function doGet(e) {
 /** Who is this key? null if unknown, inactive, or this copy hasn't run setup. */
 function whoIs_(ss, key) {
   if (!key || PropertiesService.getScriptProperties().getProperty('SHEET_ID') !== ss.getId()) return null;
+  peopleOk_(ss);
   let r;
   if (/^S\./.test(String(key))) {                  // a device signed in with name + code
     const [, who, issued, sig] = String(key).split('.');
@@ -992,6 +995,7 @@ function signIn(name, code) {
   const k1 = 'pin_' + Utilities.base64EncodeWebSafe(n).slice(0, 80), k2 = 'pin_all';
   if (Number(cache.get(k2) || 0) >= 25) throw new Error('Too many wrong codes. Sign-in with a code is paused for an hour.');
   if (Number(cache.get(k1) || 0) >= 5) throw new Error('Too many wrong codes for that name. Try again in 15 minutes.');
+  peopleOk_(ss);
   const people = rows_(ss, 'People').filter(r => r[0] && truthy_(r[7]));
   const first = r => String(r[0]).trim().toLowerCase().split(/\s+/)[0];
   let match = people.filter(r => String(r[0]).trim().toLowerCase().replace(/\s+/g, ' ') === n);
@@ -1812,4 +1816,26 @@ function activeMap_(ss, me) {
   let c = {}; try { c = CacheService.getScriptCache().getAll(live.map(r => 'seen_' + r[9])); } catch (e) {}
   live.forEach(r => { const id = String(r[9]); if (id !== me.id && !pushPrefs_(r).active) return; const ms = Math.max(Number(c['seen_' + id] || 0), toMs_(r[11])); if (ms) out[id] = ms; });
   return out;
+}
+
+/* ============================================================
+   The code finds each column by its position. If someone drags a column on the People tab
+   to a new place, sign-in and setup would read (and write) the wrong columns – so:
+   every request checks the order and stops with a clear message, and Setup puts the columns back.
+   ============================================================ */
+function peopleOk_(ss) {
+  const sh = ss.getSheetByName('People'); if (!sh || !sh.getLastColumn()) return;
+  const want = TABS.People, have = sh.getRange(1, 1, 1, Math.min(sh.getLastColumn(), want.length)).getValues()[0].map(x => String(x).trim());
+  if (have.some((h, i) => h !== want[i]) && have.some(h => want.indexOf(h) >= 0 && want.indexOf(h) !== have.indexOf(h)))
+    throw new Error('The People tab\'s columns have been moved, so names and codes can\'t be checked. Ask the organizer to run Dashboard › 1. Set up – it puts them back.');
+}
+/** Puts the tab's known columns back in their standard order (by header name); unknown extra columns go after them. */
+function fixColumns_(ss, name) {
+  const sh = ss.getSheetByName(name), want = TABS[name]; if (!sh || sh.getLastRow() < 1) return false;
+  const nc = sh.getLastColumn(), nr = sh.getLastRow(), v = sh.getRange(1, 1, nr, nc).getValues(), head = v[0].map(x => String(x).trim());
+  if (want.every((h, i) => i >= nc || head[i] === h || head[i] === '')) return false;   // already right (or only missing new columns)
+  const order = want.map(h => head.indexOf(h)), extra = head.map((h, i) => i).filter(i => order.indexOf(i) < 0);
+  const cols = order.concat(extra);
+  sh.getRange(1, 1, nr, Math.max(nc, cols.length)).setValues(v.map(r => cols.map((j, k) => j < 0 ? (k < want.length && r === v[0] ? want[k] : '') : r[j])));
+  return true;
 }
