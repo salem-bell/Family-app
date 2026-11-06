@@ -440,12 +440,14 @@ function gatheringCard(g){
   const who = `<div class="row" style="display:block"><b>${g.headcount}</b> coming${maybe.length ? ` · ${maybe.length} maybe` : ''}${no.length ? ` · ${no.length} can't` : ''}
       ${g.rsvps.length ? `<div class="muted sm" style="margin-top:3px">${yes.length ? 'Coming: ' + names(yes) : ''}${maybe.length ? (yes.length ? '<br>' : '') + 'Maybe: ' + names(maybe) : ''}${no.length ? '<br>Can\'t: ' + names(no) : ''}</div>` : ''}</div>`;
   const bring = g.bring.map(b => `<div class="row"><span class="txt">${esc(b.item)}${b.who ? ` <span class="muted sm">· ${esc(b.who)}</span>` : ''}</span>
-      ${ro() ? '' : !b.who ? `<button class="btn sm" data-claim="${b.row}" data-gid="${esc(g.id)}" data-item="${esc(b.item)}">I'll bring it</button>` : b.who === data.me.name ? `<button class="btn sm" data-claim="${b.row}" data-gid="${esc(g.id)}" data-item="${esc(b.item)}" data-undo="1">Undo</button>` : ''}</div>`).join('');
+      ${ro() ? '' : !b.who ? `<button class="btn sm" data-claim="${b.row}" data-gid="${esc(g.id)}" data-item="${esc(b.item)}">I'll bring it</button>` : b.who === data.me.name ? `<button class="btn sm" data-claim="${b.row}" data-gid="${esc(g.id)}" data-item="${esc(b.item)}" data-undo="1">Undo</button>` : ''}
+      ${!ro() && (isOrg() || b.by === data.me.name) ? `<button class="btn sm" data-bdel="${b.row}" data-gid="${esc(g.id)}" data-item="${esc(b.item)}" aria-label="Remove ${esc(b.item)}" title="Remove">✕</button>` : ''}</div>`).join('');
   const addBring = form('bring', `<input name="item" placeholder="Add something to bring" maxlength="200" aria-label="Item"><label class="lbl" style="display:flex;align-items:center;gap:4px"><input type="checkbox" name="mine" checked> I'll bring it</label><button class="btn">Add</button>`, `data-gid="${esc(g.id)}"`);
   return `<section class="card"><h2 class="lbl">${esc(g.title)}<span>${inDays(g.days)}</span></h2>
     <div class="row" style="display:block">${dayName(g.date)}${g.time ? ' · ' + fmt(new Date(g.start)) : ''}${g.where ? ` · <a href="${mapLink(g.where)}" target="_blank" rel="noopener">${esc(g.where)}</a>` : ''}
       ${g.host ? `<div class="muted sm">Host: ${esc(g.host)}</div>` : ''}${g.details ? `<div style="margin-top:4px;white-space:pre-wrap">${esc(g.details)}</div>` : ''}${g.by ? `<div class="muted sm" style="margin-top:4px">Please RSVP by ${esc(dayName(g.by))}</div>` : ''}</div>
-    ${rsvp}${who}<div class="sub lbl">Bring list</div>${bring || empty('Nothing on the list yet.')}${addBring}</section>`;
+    ${rsvp}${who}<div class="sub lbl">Bring list</div>${bring || empty('Nothing on the list yet.')}${addBring}
+    ${!ro() && (isOrg() || g.host === data.me.name) ? `<div class="acts" style="padding:8px 14px 12px"><button data-gdel="${esc(g.id)}">Delete gathering</button></div>` : ''}</section>`;
 }
 function pollCard(p){
   const total = Math.max(1, p.voters);
@@ -785,6 +787,10 @@ document.addEventListener('click', ev => {
   if (d.mdone){ act('marketDone', { id: d.mdone }); return; }
   if (d.mdel){ if (!confirm('Delete this post?')) return; data.market = data.market.filter(x => x.id !== d.mdel); render(); act('marketDelete', { id: d.mdel }); return; }
   if (d.sdel){ if (!confirm('Delete this story?')) return; data.stories = data.stories.filter(x => x.id !== d.sdel); render(); act('storyDelete', { id: d.sdel }); return; }
+  if (d.gdel){ if (/^tmp/.test(d.gdel)) { toast('Still saving – try again in a moment'); return; } const g = (data.gatherings || []).find(x => x.id === d.gdel);
+    if (!confirm('Delete "' + (g ? g.title : 'this gathering') + '"? Its RSVPs and bring list go too.')) return;
+    act('deleteGathering', { id: d.gdel }).then(() => { if (!lastErr) toast('Gathering deleted'); }); return; }
+  if (d.bdel){ if (/^tmp/.test(d.bdel)) { toast('Still saving – try again in a moment'); return; } act('bringDelete', { row: d.bdel, id: d.gid, item: d.item }); return; }
   if (d.claim){ act('bringClaim', { row: d.claim, id: d.gid, item: d.item, undo: d.undo || '' }); return; }
   if (d.vote){ const p = data.polls.find(x => x.id === d.vote); if (p){ const has = p.mine.indexOf(d.choice) >= 0; p.mine = has ? p.mine.filter(x => x !== d.choice) : (p.multiple ? p.mine.concat(d.choice) : [d.choice]); } render(); act('vote', { id: d.vote, choice: d.choice }); return; }
   if ('routine' in d){ const r = data.routines.find(x => x.name === d.routine && x.who === d.rwho); if (r) r.done = !r.done; render(); act('toggleRoutine', { name: d.routine, rwho: d.rwho }); return; }
@@ -948,9 +954,14 @@ function viewConversation(){
     const meta = chat.meta === m.id ? `<div class="meta ${mine ? 'own' : ''}">${timeOf(m.at)}${real && !ro() ? ` · <button class="lnk" data-creply="${esc(m.id)}">Reply</button>` : ''}${real && !mine && !ro() ? ` · <button class="lnk" data-cack="${esc(m.id)}">${m.ackMine ? 'Unmark read' : 'Mark read'}</button>` : ''}${real && (mine || isOrg()) && !ro() ? ` · <button class="lnk" data-cdel="${esc(m.id)}">Delete</button>` : ''}</div>` : '';
     const quote = m.reply ? `<button type="button" class="quote" data-cjump="${esc(m.reply.id)}"><b>${esc(m.reply.from ? (m.reply.from === data.me.name ? 'You' : first(m.reply.from)) : '')}</b><span>${m.reply.photo && !m.reply.text ? '📷 Photo' : esc(m.reply.text)}</span></button>` : '';
     const ackPill = acks.length ? `<div class="ackrow ${mine ? 'own' : ''}"><button class="ackp ${m.ackMine ? 'mine' : ''}" data-cacks="${esc(m.id)}" aria-label="Read by ${esc(acks.join(', '))}">${SVG_READ}${acks.length > 1 ? `<span>${acks.length}</span>` : ''}</button></div>` : '';
-    const isLastMine = mine && real && !msgs.slice(i + 1).some(x => x.id !== 'tmp');
-    const seenBy = isLastMine ? (chat.seen || []).filter(x => x.at && new Date(x.at) >= new Date(m.at)).map(x => first(x.name)) : [];
-    const seen = isLastMine && seenBy.length ? `<div class="seen">${!multi ? 'Seen' : 'Seen by ' + esc(seenBy.slice(0, 3).join(', ')) + (seenBy.length > 3 ? ` <button class="lnk" data-cseen>+${seenBy.length - 3}</button>` : '')}</div>` : '';
+    // Under your newest message: Sending… → Sent → Delivered → Seen
+    const isLastMine = mine && i === msgs.length - 1;
+    const after = x => x.at && new Date(x.at) >= new Date(m.at);
+    const seenAll = isLastMine && real ? (chat.seen || []).filter(after) : [], seenBy = seenAll.map(x => first(x.name));
+    const status = !isLastMine ? '' : !real ? 'Sending…'
+      : seenBy.length ? (!multi ? 'Seen ' + timeOf(seenAll[0].at) : 'Seen by ' + esc(seenBy.slice(0, 3).join(', ')) + (seenBy.length > 3 ? ` <button class="lnk" data-cseen>+${seenBy.length - 3}</button>` : ''))
+      : (chat.dlv || []).some(after) ? 'Delivered' : 'Sent';
+    const seen = status ? `<div class="seen">${status}</div>` : '';
     return (sep ? `<div class="daysep"><b>${dayName(ymdOf(new Date(m.at)))}</b> ${timeOf(m.at)}</div>` : '')
       + (multi && !mine && firstR ? `<div class="from">${esc(first(m.from))}</div>` : '')
       + `<div class="mrow ${mine ? 'own' : ''} ${lastR ? 'last' : ''}">`
@@ -984,7 +995,7 @@ function renderSheet(){ let el = document.getElementById('csheet'); if (!el){ el
 
 /* ----- talking to the server ----- */
 async function openChat(id, name, text, photo, opt){
-  if (chat.open !== id){ chat.msgs = []; chat.loaded = ''; chat.reply = null; chat.meta = ''; }
+  if (chat.open !== id){ chat.msgs = []; chat.loaded = ''; chat.reply = null; chat.meta = ''; chat.seen = []; chat.dlv = []; }
   chat.open = id; chat.dmName = name || chat.dmName; tab = 'chat'; save('dash-tab', tab);
   render(); scrollChat();
   if (LIVE) return liveOpen(id, text, photo, opt);
@@ -1052,6 +1063,7 @@ function liveOn(d){
   if (!here) return;
   if (d.t === 'acks'){ const m = chat.msgs.find(x => x.id === d.id); if (m){ m.acks = d.acks; m.ackIds = d.ackIds; liveMsg(m); paint(); } return; }
   if (d.t === 'seen'){ chat.seen = (chat.seen || []).filter(x => x.id !== d.id).concat({ id: d.id, name: d.name, at: d.at }); paint(); return; }
+  if (d.t === 'dlv'){ chat.dlv = (chat.dlv || []).filter(x => x.id !== d.id).concat({ id: d.id, name: d.name, at: d.at }); paint(); return; }
   if (d.t === 'deleted'){ chat.msgs = chat.msgs.filter(x => x.id !== d.id); paint(); return; }
 }
 async function liveOpen(id, text, photo, opt){
@@ -1069,7 +1081,7 @@ async function liveOpen(id, text, photo, opt){
     }
     const r = await LIVE.ask({ t: 'open', ch: id, find: opt.find || '' });
     if (chat.open !== id) return;
-    chat.msgs = r.messages.map(liveMsg); chat.seen = r.seen || []; chat.me = liveMe || chat.me; chat.loaded = id;
+    chat.msgs = r.messages.map(liveMsg); chat.seen = r.seen || []; chat.dlv = r.dlv || []; chat.me = liveMe || chat.me; chat.loaded = id;
     const c = (liveList || []).find(x => x.id === id); if (c) c.unread = 0;
     const near = isNearBottom(); render(); if (opt.find) jumpTo(opt.find); else if (near) scrollChat();
   } catch (e) {
@@ -1382,6 +1394,8 @@ function patch(A, p, op){
     case 'rsvp': { const g = byId(data.gatherings, p.id); if (!g) return; g.rsvps = (g.rsvps || []).filter(r => r.who !== me).concat({ who: me, answer: p.answer, count: Number(p.count) || 1, note: '' }); g.mine = { who: me, answer: p.answer, count: Number(p.count) || 1 };
       g.headcount = g.rsvps.filter(r => r.answer === 'Yes').reduce((n, r) => n + Math.max(1, r.count), 0); return; }
     case 'bringAdd': { const g = byId(data.gatherings, p.id); if (g) g.bring.push({ row: tmp, id: p.id, item: p.item, who: p.mine === '1' ? me : '', by: me }); return; }
+    case 'deleteGathering': data.gatherings = (data.gatherings || []).filter(g => g.id !== p.id); return;
+    case 'bringDelete': (data.gatherings || []).forEach(g => { g.bring = g.bring.filter(b => String(b.row) !== String(p.row)); }); return;
     case 'bringClaim': (data.gatherings || []).forEach(g => { const b = byRow(g.bring, p.row); if (b) b.who = p.undo === '1' ? '' : me; }); return;
     case 'addPoll': (data.polls = data.polls || []).unshift({ id: tmp, question: p.question, closes: p.closes || '', open: true, by: me, multiple: p.multiple === '1', options: String(p.options).split('\n').filter(Boolean).map(text => ({ text, voters: [] })), mine: [], voters: 0 }); return;
     case 'vote': { const pl = byId(data.polls, p.id); if (!pl) return;

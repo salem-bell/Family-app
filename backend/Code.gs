@@ -883,6 +883,19 @@ function act_(ss, p, me) {
       return;
     }
     case 'bringAdd': { const item = clean_(p.item, 200); if (!item || !findRow_(sheet('Gatherings'), p.id)) return; sheet('Bring list').appendRow([String(p.id), item, p.mine === '1' ? who : '', who]); return; }
+    case 'deleteGathering': {                          // the host or an organizer; its RSVPs and bring list go with it
+      const sh = sheet('Gatherings'), r = findRow_(sh, p.id); if (!r) return;
+      if (String(sh.getRange(r, 6).getValue() || '') !== who && me.role !== 'Organizer') throw new Error('Only the host or an organizer can delete a gathering');
+      sh.deleteRow(r);
+      ['RSVPs', 'Bring list'].forEach(n => { const t = ss.getSheetByName(n); if (!t || t.getLastRow() < 2) return; const v = t.getRange(2, 1, t.getLastRow() - 1, 1).getValues(); for (let i = v.length - 1; i >= 0; i--) if (String(v[i][0]) === String(p.id)) t.deleteRow(i + 2); });
+      return;
+    }
+    case 'bringDelete': {                              // whoever added it, or an organizer
+      const sh = sheet('Bring list'), r = Number(p.row);
+      if (!rowMatches(sh, r, 2, p.item) || String(sh.getRange(r, 1).getValue()) !== String(p.id)) throw new Error('That item changed – refresh and try again');
+      if (String(sh.getRange(r, 4).getValue() || '') !== who && me.role !== 'Organizer') throw new Error('Only the person who added it or an organizer can remove it');
+      sh.deleteRow(r); return;
+    }
     case 'bringClaim': {
       const sh = sheet('Bring list'), r = Number(p.row);
       if (!rowMatches(sh, r, 2, p.item) || String(sh.getRange(r, 1).getValue()) !== String(p.id)) throw new Error('That item changed – refresh and try again');
