@@ -1866,7 +1866,8 @@ function fixColumns_(ss, name) {
    ============================================================ */
 function chatLive_(ss) { return !!(setting_(ss, 'Chat service address') && setting_(ss, 'Chat service secret')); }
 function b64u_(bytes) { return Utilities.base64EncodeWebSafe(bytes).replace(/=+$/, ''); }
-function chatSign_(secret, text) { return b64u_(Utilities.computeHmacSha256Signature(text, secret)); }
+// UTF-8 on both sides: Google's default text encoding differs from Cloudflare's for anything beyond plain letters (dashes, accents, emoji).
+function chatSign_(secret, text) { return b64u_(Utilities.computeHmacSha256Signature(String(text), String(secret), Utilities.Charset.UTF_8)); }
 function chatTierOf_(role) { return role === 'Organizer' ? 2 : 1; }
 function chatRoster_(ss) {
   const ppl = rows_(ss, 'People').filter(r => r[0] && r[9]);
@@ -1877,7 +1878,7 @@ function chatRoster_(ss) {
 }
 function chatPost_(ss, path, obj) {
   const url = setting_(ss, 'Chat service address').replace(/\/+$/, '') + '/s/family/' + path, body = JSON.stringify(obj);
-  const res = UrlFetchApp.fetch(url, { method: 'post', contentType: 'application/json', payload: body, headers: { 'x-sig': chatSign_(setting_(ss, 'Chat service secret'), body) }, muteHttpExceptions: true });
+  const res = UrlFetchApp.fetch(url, { method: 'post', contentType: 'application/json; charset=utf-8', payload: Utilities.newBlob(body).getBytes(), headers: { 'x-sig': chatSign_(setting_(ss, 'Chat service secret'), body) }, muteHttpExceptions: true });
   if (res.getResponseCode() !== 200) throw new Error('The chat service answered ' + res.getResponseCode() + ' – check Settings › Chat service address and secret');
   return JSON.parse(res.getContentText());
 }
