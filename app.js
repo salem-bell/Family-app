@@ -464,10 +464,24 @@ const VIEWS = {
   directory(){
     const ds = data.directory || [], g = {};
     ds.forEach(x => (g[x.household || 'Family'] = g[x.household || 'Family'] || []).push(x));
-    const person = x => `<div class="row" style="display:block"><b>${esc(x.name)}</b>${x.birthday ? ` <span class="muted sm">· 🎂 ${pd('2000-' + x.birthday).toLocaleDateString([], { month:'short', day:'numeric' })}${x.days !== null && x.days <= 30 ? ' (' + inDays(x.days) + ')' : ''}</span>` : ''}
+    const hh = [...new Set(ds.map(x => x.household).filter(Boolean))];
+    const editForm = x => { x = x || {}; const isNew = !x.row;
+      return `<form class="add dirform" data-form="dir" ${isNew ? '' : `data-row="${x.row}" data-orig="${esc(x.name)}"`} style="display:grid;gap:8px;grid-template-columns:1fr 1fr">
+        <input name="name" placeholder="Name" value="${esc(x.name || '')}" maxlength="100" aria-label="Name" required>
+        <input name="household" placeholder="Household" value="${esc(x.household || '')}" maxlength="100" aria-label="Household" list="dirhh">
+        <input name="phone" type="tel" placeholder="Phone" value="${esc(x.phone || '')}" maxlength="40" aria-label="Phone">
+        <input name="email" type="email" placeholder="Email" value="${esc(x.email || '')}" maxlength="120" aria-label="Email">
+        <input name="address" placeholder="Address" value="${esc(x.address || '')}" maxlength="300" aria-label="Address" style="grid-column:1/-1">
+        <label class="muted sm" style="display:flex;flex-direction:column;gap:3px">Birthday<input name="birthday" type="date" value="${esc(x.bday || '')}" aria-label="Birthday"></label>
+        <input name="notes" placeholder="Notes (optional)" value="${esc(x.notes || '')}" maxlength="500" aria-label="Notes" style="align-self:end">
+        <div style="grid-column:1/-1;display:flex;gap:8px;flex-wrap:wrap"><button class="btn go">${isNew ? 'Add' : 'Save'}</button><button type="button" class="btn" data-dircancel>Cancel</button>
+          ${!isNew && isOrg() ? `<button type="button" class="btn" data-dirdel="${x.row}" data-orig="${esc(x.name)}" style="margin-left:auto">Remove</button>` : ''}</div>
+        <datalist id="dirhh">${hh.map(h => `<option value="${esc(h)}">`).join('')}</datalist></form>`; };
+    const person = x => String(dirEdit) === String(x.row) ? `<div class="row" style="display:block">${editForm(x)}</div>` : `<div class="row" style="display:block"><div style="display:flex;justify-content:space-between;gap:8px;align-items:baseline"><span><b>${esc(x.name)}</b>${x.birthday ? ` <span class="muted sm">· 🎂 ${pd('2000-' + x.birthday).toLocaleDateString([], { month:'short', day:'numeric' })}${x.days !== null && x.days <= 30 ? ' (' + inDays(x.days) + ')' : ''}</span>` : ''}</span>${ro() ? '' : `<button class="lnk sm" data-diredit="${x.row}">Edit</button>`}</div>
       <div class="acts" style="margin-top:4px">${x.phone ? `<a href="tel:${esc(x.phone.replace(/[^\d+]/g, ''))}" target="_top">Call ${esc(x.phone)}</a><a href="sms:${esc(x.phone.replace(/[^\d+]/g, ''))}" target="_top">Text</a>` : ''}${x.email ? `<a href="mailto:${esc(x.email)}" target="_top">Email</a>` : ''}${x.address ? `<a href="${mapLink(x.address)}" target="_blank" rel="noopener">Map</a>` : ''}</div>
       ${x.address ? `<div class="muted sm" style="margin-top:4px">${esc(x.address)}</div>` : ''}${x.notes ? `<div class="muted sm">${esc(x.notes)}</div>` : ''}</div>`;
-    return `<div class="grid">${Object.keys(g).map(h => card(esc(h), g[h].map(person).join(''))).join('') || card('Directory', empty('Add everyone to the Directory tab of the sheet.'))}</div>`;
+    const add = ro() ? '' : dirEdit === 'new' ? card('Add someone', `<div class="row" style="display:block">${editForm(null)}</div>`) : `<div style="margin-bottom:14px"><button class="btn go" data-diredit="new">+ Add someone</button></div>`;
+    return add + `<div class="grid">${Object.keys(g).map(h => card(esc(h), g[h].map(person).join(''))).join('') || card('Directory', empty('Nobody here yet – add the first person.'))}</div>`;
   },
   gatherings(){
     const gs = data.gatherings || [];
@@ -787,6 +801,9 @@ document.addEventListener('click', ev => {
   if (d.mdone){ act('marketDone', { id: d.mdone }); return; }
   if (d.mdel){ if (!confirm('Delete this post?')) return; data.market = data.market.filter(x => x.id !== d.mdel); render(); act('marketDelete', { id: d.mdel }); return; }
   if (d.sdel){ if (!confirm('Delete this story?')) return; data.stories = data.stories.filter(x => x.id !== d.sdel); render(); act('storyDelete', { id: d.sdel }); return; }
+  if (d.diredit){ if (/^tmp/.test(d.diredit)) { toast('Still saving – try again in a moment'); return; } dirEdit = d.diredit; render(); const i = $('form[data-form=dir] input[name=name]'); if (i) i.focus(); return; }
+  if ('dircancel' in d){ dirEdit = ''; render(); return; }
+  if (d.dirdel){ if (!confirm('Remove ' + d.orig + ' from the directory?')) return; dirEdit = ''; act('dirDelete', { row: d.dirdel, orig: d.orig }).then(() => { if (!lastErr) toast('Removed'); }); return; }
   if (d.gdel){ if (/^tmp/.test(d.gdel)) { toast('Still saving – try again in a moment'); return; } const g = (data.gatherings || []).find(x => x.id === d.gdel);
     if (!confirm('Delete "' + (g ? g.title : 'this gathering') + '"? Its RSVPs and bring list go too.')) return;
     act('deleteGathering', { id: d.gdel }).then(() => { if (!lastErr) toast('Gathering deleted'); }); return; }
@@ -846,6 +863,9 @@ document.addEventListener('submit', ev => {
       act('addEvent', p).then(done('Added to the calendar')); f.reset(); return;
     }
     case 'shop': { const item = v('item'); if (!item) return; (data.shopping = data.shopping || []).push({ row: 0, item, qty: v('qty'), by: data.me.name, got: false, store: v('store') }); render(); act('addShop', { item, qty: v('qty'), store: v('store') }); return; }
+    case 'dir': { if (!v('name')){ toast('Add a name'); return; } const p = { name: v('name'), household: v('household'), phone: v('phone'), email: v('email'), address: v('address'), birthday: v('birthday'), notes: v('notes') };
+      if (f.dataset.row){ if (/^tmp/.test(f.dataset.row)) { toast('Still saving – try again in a moment'); return; } p.row = f.dataset.row; p.orig = f.dataset.orig; }
+      dirEdit = ''; act('dirSave', p).then(done(p.row ? 'Saved' : 'Added to the directory')); return; }
     case 'note': if (!v('text')) return; act('addNote', { text: v('text'), pin: v('pin') }); f.reset(); return;
     case 'meal': if (!v('what')){ toast("Add what's cooking"); return; } act('addMeal', { date: v('date'), meal: v('meal'), what: v('what'), cook: v('cook') }); f.reset(); return;
     case 'number': if (!v('value')) return; act('logNumber', { name: f.dataset.name, value: v('value') }).then(done('Logged')); return;
@@ -870,6 +890,7 @@ document.addEventListener('input', ev => { const el = ev.target; if (el.dataset 
 /* =========================================================
    Messages (family chat) – v3
    ========================================================= */
+let dirEdit = '';                                     // directory: row being edited, or 'new'
 const chat = { open: '', msgs: [], compose: '', photo: '', q: '', results: null, sheet: null, meta: '', reply: null, flash: '', seen: [] };
 const first = n => String(n || '').trim().split(/\s+/)[0];
 const ymdOf = d => ymd(d);
@@ -1400,6 +1421,11 @@ function patch(A, p, op){
     case 'rsvp': { const g = byId(data.gatherings, p.id); if (!g) return; g.rsvps = (g.rsvps || []).filter(r => r.who !== me).concat({ who: me, answer: p.answer, count: Number(p.count) || 1, note: '' }); g.mine = { who: me, answer: p.answer, count: Number(p.count) || 1 };
       g.headcount = g.rsvps.filter(r => r.answer === 'Yes').reduce((n, r) => n + Math.max(1, r.count), 0); return; }
     case 'bringAdd': { const g = byId(data.gatherings, p.id); if (g) g.bring.push({ row: tmp, id: p.id, item: p.item, who: p.mine === '1' ? me : '', by: me }); return; }
+    case 'dirSave': { const ds = data.directory = data.directory || [], b = p.birthday || '';
+      const e = { name: p.name, household: p.household, phone: p.phone, email: p.email, address: p.address, notes: p.notes, bday: b, birthday: b ? b.slice(5) : '', days: null, color: '' };
+      if (p.row){ const x = ds.find(y => String(y.row) === String(p.row)); if (x) Object.assign(x, e); } else ds.push(Object.assign(e, { row: tmp }));
+      ds.sort((a, c) => (a.household || '~').localeCompare(c.household || '~') || a.name.localeCompare(c.name)); return; }
+    case 'dirDelete': data.directory = (data.directory || []).filter(x => String(x.row) !== String(p.row)); return;
     case 'deleteGathering': data.gatherings = (data.gatherings || []).filter(g => g.id !== p.id); return;
     case 'bringDelete': (data.gatherings || []).forEach(g => { g.bring = g.bring.filter(b => String(b.row) !== String(p.row)); }); return;
     case 'bringClaim': (data.gatherings || []).forEach(g => { const b = byRow(g.bring, p.row); if (b) b.who = p.undo === '1' ? '' : me; }); return;

@@ -883,6 +883,20 @@ function act_(ss, p, me) {
       return;
     }
     case 'bringAdd': { const item = clean_(p.item, 200); if (!item || !findRow_(sheet('Gatherings'), p.id)) return; sheet('Bring list').appendRow([String(p.id), item, p.mine === '1' ? who : '', who]); return; }
+    case 'dirSave': {                                  // anyone (not view-only) can add people or fix anyone's details
+      const sh = sheet('Directory'), name = clean_(p.name, 100); if (!name) throw new Error('Add a name');
+      if (p.birthday && !/^\d{4}-\d{2}-\d{2}$/.test(p.birthday)) throw new Error('The birthday should be a date');
+      if (p.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(p.email)) throw new Error('That email doesn\'t look right');
+      const row = [name, clean_(p.household, 100), clean_(p.phone, 40), clean_(p.email, 120), clean_(p.address, 300), p.birthday || '', clean_(p.notes, 500, true)];
+      if (p.row) { const r = Number(p.row); if (!rowMatches(sh, r, 1, p.orig)) throw new Error('That entry changed – refresh and try again'); sh.getRange(r, 1, 1, 7).setValues([row]); }
+      else sh.appendRow(row);
+      return;
+    }
+    case 'dirDelete': {                                // organizers only
+      if (me.role !== 'Organizer') throw new Error('Only organizers can remove someone from the directory');
+      const sh = sheet('Directory'), r = Number(p.row); if (!rowMatches(sh, r, 1, p.orig)) throw new Error('That entry changed – refresh and try again');
+      sh.deleteRow(r); return;
+    }
     case 'deleteGathering': {                          // the host or an organizer; its RSVPs and bring list go with it
       const sh = sheet('Gatherings'), r = findRow_(sh, p.id); if (!r) return;
       if (String(sh.getRange(r, 6).getValue() || '') !== who && me.role !== 'Organizer') throw new Error('Only the host or an organizer can delete a gathering');
@@ -1045,12 +1059,12 @@ function signIn(name, code) {
 
 function directory_(ss, tz, today) {
   const ppl = {}; rows_(ss, 'People').forEach(r => { if (r[0]) ppl[String(r[0]).toLowerCase()] = String(r[3] || ''); });
-  return rows_(ss, 'Directory').filter(r => r[0]).map(r => {
+  return rows_(ss, 'Directory').map((r, i) => [r, i + 2]).filter(x => x[0][0]).map(([r, row]) => {
     const b = ymd_(r[5], tz);
     let next = '';
     if (b) { const y = Number(today.slice(0, 4)); next = y + b.slice(4); if (next < today) next = (y + 1) + b.slice(4); }
     return { name: String(r[0]), household: String(r[1] || ''), phone: String(r[2] || ''), email: String(r[3] || ''), address: String(r[4] || ''),
-             birthday: b ? b.slice(5) : '', nextBirthday: next, days: next ? daysBetween_(today, next) : null, notes: String(r[6] || ''), color: ppl[String(r[0]).toLowerCase()] || '' };
+             birthday: b ? b.slice(5) : '', nextBirthday: next, days: next ? daysBetween_(today, next) : null, notes: String(r[6] || ''), color: ppl[String(r[0]).toLowerCase()] || '', row, bday: b || '' };
   }).sort((a, b) => (a.household || '~').localeCompare(b.household || '~') || a.name.localeCompare(b.name));
 }
 
