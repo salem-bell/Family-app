@@ -7,7 +7,7 @@
  * Deploy > Manage deployments > pencil > New version > Deploy, then Dashboard > 1. Set up again.
  */
 
-const VERSION = '3.3';
+const VERSION = '3.4';
 const EDITIONS = ['Personal', 'Couple', 'Family'];
 const ROLES = ['Organizer', 'Member', 'Viewer'];
 const PALETTE = ['#2F6FB2', '#C2185B', '#2E7D32', '#EF6C00', '#6A1B9A', '#00838F', '#8D6E63', '#455A64'];
@@ -131,6 +131,8 @@ const SETTINGS = [
   ['Ask for the code again every', ['60', '60', '60'],             'Days before a signed-in device asks for the name and code again (0 = never). Only applies to sign-in with a code.'],
   ['Phone app address',     ['', '', ''],                            'Optional. The address of the installable phone app (e.g. https://you.github.io/Family-App/). Shown in "Get app links" so people install that one.'],
   ['Delete chat photos after (days)', ['60', '60', '60'],          'Photos sent in Messages are kept in a private Drive folder and deleted after this many days.'],
+  ['Chat service address',  ['', '', ''],                            'Live Messages (the Cloudflare team-chat Worker), e.g. https://team-chat….workers.dev. Blank = Messages run on this sheet (slower; messages saved in the Messages tab).'],
+  ['Chat service secret',   ['', '', ''],                            'Must match SECRET_FAMILY in the team-chat Worker. Don\'t share it.'],
   ['Push service address',  ['', '', ''],                            'For phone notifications: the Cloudflare Worker address (https://….workers.dev). Blank = no notifications. The same Worker can serve several dashboards.'],
   ['Push service secret',   ['', '', ''],                            'Must match SECRET in that Worker. Don\'t share it.'],
   ['Push public key',       ['', '', ''],                            'Must match VAPID_PUBLIC in that Worker.'],
@@ -540,7 +542,8 @@ function state_(ss, me) {
   out.market    = run('Marketplace', () => market_(ss, tz, today));
   out.stories   = run('Stories', () => stories_(ss));
   if (out.market) out.regions = splitList_(setting_(ss, 'Regions'));
-  if (on['Messages'] && me.id) { try { out.meId = me.id; out.channels = channels_(ss, me); out.active = activeMap_(ss, me); } catch (e) { errors.push('Messages: ' + e.message); } }
+  if (on['Messages'] && me.id) { try { out.meId = me.id; out.active = activeMap_(ss, me);
+      if (chatLive_(ss)) { out.chat = { url: setting_(ss, 'Chat service address').replace(/\/+$/, '') }; out.channels = []; } else out.channels = channels_(ss, me); } catch (e) { errors.push('Messages: ' + e.message); } }
   out.push = pushInfo_(ss, me);
   out.phoneApp = /^https:\/\//.test(setting_(ss, 'Phone app address')) ? setting_(ss, 'Phone app address') : '';
   return out;
@@ -1521,13 +1524,13 @@ function test() {
    v3: the phone app (GitHub-hosted) talks to this script through doPost.
    The same functions also work from the page Apps Script serves (google.script.run).
    ============================================================ */
-const PUBLIC_FNS_ = { api: 1, signIn: 1, signInInfo: 1, chat: 1, chatSearch: 1, chatPhoto: 1 };
+const PUBLIC_FNS_ = { api: 1, signIn: 1, signInInfo: 1, chat: 1, chatSearch: 1, chatPhoto: 1, chatTicket: 1, chatPush: 1 };
 function doPost(e) {
   let body = {};
   try { body = JSON.parse((e && e.postData && e.postData.contents) || '{}'); } catch (_) { return json_({ error: 'bad request' }); }
   const fn = String(body.fn || '');
   if (!PUBLIC_FNS_[fn]) return json_({ error: 'unknown' });
-  const F = { api, signIn, signInInfo, chat, chatSearch, chatPhoto };
+  const F = { api, signIn, signInInfo, chat, chatSearch, chatPhoto, chatTicket, chatPush };
   try { return json_({ ok: true, result: F[fn].apply(null, Array.isArray(body.args) ? body.args : []) }); }
   catch (err) { return json_({ error: String(err && err.message || err) }); }
 }
@@ -1854,4 +1857,55 @@ function fixColumns_(ss, name) {
   const cols = order.concat(extra);
   sh.getRange(1, 1, nr, Math.max(nc, cols.length)).setValues(v.map(r => cols.map((j, k) => j < 0 ? (k < want.length && r === v[0] ? want[k] : '') : r[j])));
   return true;
+}
+
+/* ============================================================
+   Live Messages (v3.4): the team-chat Cloudflare Worker holds conversations; this sheet vouches for who's who.
+   chatTicket – a signed 24-hour chat pass for the signed-in person (and keeps the service's list of people current)
+   chatPush   – the service asks for notifications; this sheet knows everyone's settings and phones
+   ============================================================ */
+function chatLive_(ss) { return !!(setting_(ss, 'Chat service address') && setting_(ss, 'Chat service secret')); }
+function b64u_(bytes) { return Utilities.base64EncodeWebSafe(bytes).replace(/=+$/, ''); }
+function chatSign_(secret, text) { return b64u_(Utilities.computeHmacSha256Signature(text, secret)); }
+function chatTierOf_(role) { return role === 'Organizer' ? 2 : 1; }
+function chatRoster_(ss) {
+  const ppl = rows_(ss, 'People').filter(r => r[0] && r[9]);
+  const seed = ss.getSheetByName('Channels') ? rows_(ss, 'Channels').filter(r => r[0] && r[1]).map(r => ({ id: String(r[0]), name: String(r[1]), kind: String(r[2] || 'channel'), members: String(r[3] || ''), who: /organi/i.test(String(r[4] || '')) ? 'Organizers' : 'Everyone', by: String(r[5] || '') })) : [];
+  return { space: 'family', relay: setting_(ss, 'App web address'), photoDays: Number(setting_(ss, 'Delete chat photos after (days)')) || 60,
+    rules: { makeChannel: 2, editChannel: 2, deleteAny: 2, deleteOwn: true, whoLabels: { 0: 'Everyone', 2: 'Organizers' }, channelHint: 'Only organizers can make channels – start a group instead' },
+    people: ppl.map(r => ({ id: String(r[9]), name: String(r[0]), tier: chatTierOf_(String(r[2])), ro: String(r[2]) === 'Viewer', active: truthy_(r[7]) })), channels: seed };
+}
+function chatPost_(ss, path, obj) {
+  const url = setting_(ss, 'Chat service address').replace(/\/+$/, '') + '/s/family/' + path, body = JSON.stringify(obj);
+  const res = UrlFetchApp.fetch(url, { method: 'post', contentType: 'application/json', payload: body, headers: { 'x-sig': chatSign_(setting_(ss, 'Chat service secret'), body) }, muteHttpExceptions: true });
+  if (res.getResponseCode() !== 200) throw new Error('The chat service answered ' + res.getResponseCode() + ' – check Settings › Chat service address and secret');
+  return JSON.parse(res.getContentText());
+}
+function chatSyncRoster_(ss, force) {
+  const r = chatRoster_(ss), c = CacheService.getScriptCache();
+  const h = Utilities.base64Encode(Utilities.computeDigest(Utilities.DigestAlgorithm.MD5, JSON.stringify(r.people) + JSON.stringify(r.rules) + r.relay));
+  if (!force && c.get('chatRoster') === h) return;
+  chatPost_(ss, 'roster', r); c.put('chatRoster', h, 21600);
+}
+function chatTicket(key) {
+  memoReset_(false);
+  const ss = SpreadsheetApp.getActive(), me0 = whoIs_(ss, key); if (!me0) throw new Error('unauthorized');
+  if (!chatLive_(ss)) throw new Error('Live chat isn\'t set up (Settings › Chat service address)');
+  const me = chatMe_(ss, me0); if (!me.id) throw new Error('You need a chat ID – ask the organizer to run Dashboard › 1. Set up.');
+  touch_(ss, me); chatSyncRoster_(ss);
+  const exp = Math.floor(Date.now() / 1000) + 86400, body = b64u_(Utilities.newBlob(JSON.stringify({ s: 'family', u: me.id, n: me.name, t: chatTierOf_(me.role), ro: me.role === 'Viewer', e: exp })).getBytes());
+  return { ok: true, url: setting_(ss, 'Chat service address').replace(/\/+$/, ''), space: 'family', ticket: body + '.' + chatSign_(setting_(ss, 'Chat service secret'), body), exp };
+}
+/** Called by the chat service after a message: notify the people it lists (their settings and @mentions apply). */
+function chatPush(payload, sig) {
+  const ss = SpreadsheetApp.getActive(), secret = setting_(ss, 'Chat service secret');
+  if (!secret || !payload || chatSign_(secret, String(payload)) !== String(sig || '')) throw new Error('bad signature');
+  const p = JSON.parse(payload); if (Math.abs(Date.now() - Number(p.at || 0)) > 300000) throw new Error('too old');
+  memoReset_(false);
+  const all = rows_(ss, 'People'), byId = {}; all.forEach(r => { if (r[9]) byId[String(r[9])] = String(r[0]); });
+  const direct = p.kind !== 'channel', who = String(p.from && p.from.name || '').split(' ')[0], text = String(p.text || '');
+  push_(ss, (p.to || []).filter(uid => byId[uid]).map(uid => { const m = !direct && mentions_(text, byId[uid], all);
+    return { uid, kind: 'msg', direct: direct || m, title: m ? who + ' mentioned you in # ' + p.name : direct ? (p.kind === 'group' ? who + ' · ' + p.name : String(p.from.name)) : '# ' + p.name + ' · ' + who,
+      body: text ? text.slice(0, 200) : '📷 Photo', url: '?go=chat:' + p.ch, tag: 'chat-' + p.ch }; }));
+  return { ok: true };
 }
