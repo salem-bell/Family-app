@@ -7,7 +7,7 @@
  * Deploy > Manage deployments > pencil > New version > Deploy, then Dashboard > 1. Set up again.
  */
 
-const VERSION = '3.4';
+const VERSION = '3.5';
 const EDITIONS = ['Personal', 'Couple', 'Family'];
 const ROLES = ['Organizer', 'Member', 'Viewer'];
 const PALETTE = ['#2F6FB2', '#C2185B', '#2E7D32', '#EF6C00', '#6A1B9A', '#00838F', '#8D6E63', '#455A64'];
@@ -41,6 +41,7 @@ const FEATURES = [
   ['Recipes',            'recipes',   [0, 0, 1], 'The family cookbook: ingredients, steps and whose recipe it is.',         'The app, or the Recipes tab', ['Recipes']],
   ['Marketplace',        'market',    [0, 0, 1], 'Give things away or ask for a hand – tagged by region, so people nearby see it first.', 'The app; Settings › Regions', ['Marketplace']],
   ['Stories',            'stories',   [0, 0, 1], 'Family stories and memories, so they don\'t get lost.',                      'The app, or the Stories tab', ['Stories']],
+  ['Daily Word',         'game',      [0, 0, 1], 'A five-letter word game everyone plays once a day, with a weekly leaderboard. Monday\'s results go to the Everyone chat.', 'The app (Dashboard › Post the Daily Word results posts last week now)', ['Game', 'Game weeks']],
   ['Inventory alerts',   'inventory', [0, 0, 0], 'Items below par (for a pantry, supplies or a shop).',                        'Inventory tab', ['Inventory']],
 ];
 const ED_INDEX = { personal: 0, couple: 1, family: 2 };
@@ -76,6 +77,8 @@ const TABS = {
   'Votes':       ['Poll ID', 'Person', 'Choice', 'Updated'],
   'Marketplace': ['ID', 'Posted', 'From', 'Type', 'What', 'Details', 'Region', 'Status', 'Taken by', 'Updated'],
   'Stories':     ['ID', 'Posted', 'From', 'Title', 'Story', 'About (who)', 'When it happened', 'Photo link'],
+  'Game':        ['Date', 'Person', 'Guesses', 'Result', 'Points', 'Finished at'],
+  'Game weeks':  ['Week of (Monday)', 'Champion', 'Points', 'Standings', 'Posted'],
   'Recipes':     ['Recipe', 'From', 'Category', 'Ingredients', 'Steps', 'Link', 'Added by'],
   // system tabs
   'Views':       ['Person', 'Features (in order)', 'Look', 'Text', 'Seen', 'Mode'],
@@ -152,6 +155,8 @@ function onOpen() {
     .addSeparator()
     .addItem('New link for the selected person', 'resetSelected')
     .addItem('New links for everyone', 'resetAll')
+    .addSeparator()
+    .addItem('Post the Daily Word results for last week', 'gameWeeklyNow')
     .addToUi();
 }
 
@@ -173,6 +178,7 @@ function setup() {
   Object.keys(TABS).forEach(t => { if (ss.getSheetByName(t)) buildTab_(ss, t, ed); });   // older copies: add new columns
   SYSTEM_TABS.forEach(t => buildTab_(ss, t, ed));
   ensureKeys_(ss, isCopy);
+  const gameNote = on[GAME_NAME_] && !gameTrigger_() ? '\n\nThe Daily Word could not set up its Monday update (Apps Script needs permission for triggers). The first person to open the app each Monday will post it instead.' : '';
   if (isCopy) PropertiesService.getScriptProperties().setProperties({ SHEET_ID: ss.getId() });
 
   ['Start Here', 'Settings', 'Features', 'People'].forEach((n, i) => move_(ss, n, i + 1));
@@ -181,7 +187,7 @@ function setup() {
   if (blank && blank.getLastRow() === 0 && ss.getSheets().length > 1) ss.deleteSheet(blank);
 
   ss.setActiveSheet(ss.getSheetByName('Start Here'));
-  ui_().alert('Set up done', 'Your tabs are ready.\n\nNext: fill in the People tab, then follow Step 3 on the Start Here tab to turn on the app.', ui_().ButtonSet.OK);
+  ui_().alert('Set up done', 'Your tabs are ready.\n\nNext: fill in the People tab, then follow Step 3 on the Start Here tab to turn on the app.' + gameNote, ui_().ButtonSet.OK);
 }
 
 function guessEdition_(ss) {
@@ -233,6 +239,7 @@ function buildTab_(ss, name, ed, legacyPeople) {
   header_(sh, header.length);
   if (name === 'Gatherings') [3, 4, 8].forEach(c => sh.getRange(2, c, 499, 1).setNumberFormat('@'));
   if (name === 'Polls') sh.getRange(2, 4, 499, 1).setNumberFormat('@');
+  if (name === 'Game' || name === 'Game weeks') sh.getRange(2, 1, 1999, 1).setNumberFormat('@');
   if (name === 'Events') [2, 3, 4, 9].forEach(c => sh.getRange(2, c, 499, 1).setNumberFormat('@'));   // keep dates/times as typed
   let ex = examples_(ss, name, ed || guessEdition_(ss));
   if (name === 'People' && legacyPeople && legacyPeople.length)
@@ -260,6 +267,7 @@ function buildTab_(ss, name, ed, legacyPeople) {
     case 'RSVPs': list(3, ['Yes', 'Maybe', 'No'], true); break;
     case 'Polls': textCol(4); box(6); sh.getRange(2, 3, 499, 1).setWrap(true); break;
     case 'Marketplace': list(4, ['Giving away', 'Need help'], true); list(8, ['Open', 'Taken', 'Done'], true); sh.getRange(2, 6, 499, 1).setWrap(true); break;
+    case 'Game weeks': sh.getRange(2, 4, 499, 1).setWrap(true).setVerticalAlignment('top'); break;
     case 'Stories': sh.getRange(2, 5, 499, 1).setWrap(true).setVerticalAlignment('top'); sh.setColumnWidth(5, 480); break;
     case 'Recipes': sh.getRange(2, 4, 499, 2).setWrap(true).setVerticalAlignment('top'); sh.setColumnWidth(4, 300); sh.setColumnWidth(5, 380); break;
     case 'Follow-ups':
@@ -541,6 +549,7 @@ function state_(ss, me) {
   out.recipes   = run('Recipes', () => recipes_(ss));
   out.market    = run('Marketplace', () => market_(ss, tz, today));
   out.stories   = run('Stories', () => stories_(ss));
+  out.game      = run(GAME_NAME_, () => game_(ss, tz, today, me));
   if (out.market) out.regions = splitList_(setting_(ss, 'Regions'));
   if (on['Messages'] && me.id) { try { out.meId = me.id; out.active = activeMap_(ss, me);
       if (chatLive_(ss)) { out.chat = { url: setting_(ss, 'Chat service address').replace(/\/+$/, '') }; out.channels = []; } else out.channels = channels_(ss, me); } catch (e) { errors.push('Messages: ' + e.message); } }
@@ -834,6 +843,7 @@ function act_(ss, p, me) {
 
   if (/^(newChannel|editChannel|deleteMessage)$/.test(A)) return chatAct_(ss, p, me);
   if (/^push(Sub|Unsub|Prefs|Test)$/.test(A)) return pushAct_(ss, p, me);
+  if (/^game(Guess|Share)$/.test(A)) return gameAct_(ss, p, me, today, tz);
   switch (A) {
     case 'saveView': {
       const sh = sheet('Views'), names = colValues_(sh, 1), i = names.indexOf(who);
@@ -1135,6 +1145,177 @@ function familyExamples_(name, d) {
   }
   return null;
 }
+
+/* ============================================================
+   Daily Word: one five-letter word a day for the whole family (6 tries).
+   Points: solved in 1 = 6 … solved in 6 = 1, missed = 0. Weeks run Monday–Sunday.
+   Every Monday the week's results go to the Everyone chat (a weekly trigger, or the first app visit that Monday).
+   The answer order is shuffled with a secret kept in Script Properties, so the list in this file doesn't give the days away.
+   ============================================================ */
+const GAME_START_ = '2026-11-06';   // puzzle #1
+const GAME_NAME_ = 'Daily Word';
+const GAME_WORDS_ = 'abouttheirtherewhichwouldotherafterfirstthinkcouldthesewhererightbeinggoingstillneverthoseworldgreatwhileeverystatethreesinceunderthinghouseplaceagainfoundmightmoneynightuntildoinggroupstarttodaypointmusicpowerwatersmallwhitelaterorderpartythankblackwholemaybestoryleastearlylocalvideoyoungcourtgivenleveloftensouthknownlargewrongalongclassclosecausehappyhumanwomanleavenorthwatchlightshorttakenthirdamongcheckheartchildmajormediaphonequitefinalfrontreadybringmarchstudyclearmonthboardfieldfightforceissuepricespacetotalabovesharesensebreakeventsorryguesslearnalonemoviepressworthsoundvalueroundstandstuffdrivegreenmatchmodeltrustrangetradechieflowerstylebloodstagetitleenjoycoverlegalsevenstaffsuperunionbuiltcrazydailypapervoicewhoseearthbelowoffersleeptabletruthbuildpiecevisitwroterivershallspeakwritealbumeightfunnypeacespentstoretrackaheadallowbrownradiocrossextraquickagreecleanphotoscenespendcoachheavytrainclaimhoteljudgebrainfloorimagemeantreachcivildancestockworstbeacholdercolordreamgrandsweettouchdoubtdrinkshownbasiccarrycrimefullyplantworseawardblockavoidcatchcoasttrialtrulyqueenbrokeglasspriorroyalservebegintwiceworrybrandcountfreshmouthownerscalescoresmartthrowclickfaithmetalagentapplyenterprimewasteweirdadultgradestoneapartawarefifthbirthlaborluckyprovetoughaliveappledresshorsemagicstickguideraisetreatyouthexistguardshootsolidsporttastehelloplaneshapeuppercheapjointsteelcrowdenemylimitoceanproofchairhonoremailstucksugardramaentrygrantgrownlyingroutesmokesquadteachangrylaughlunchstormactorchainequalquietspliturbanfaultphasesmiletruckblamefalsenovelshirtcreamgiantmayorminorthemeusualdraftspokeupsetcycleasideemptyprizeruraladmitfavorframeguestteethbunchfruitindexshiftstoodtightcrowngracechosecrashdepthdirtyerrornoisepanelplateshamecableprintsightbroaddrawnmotorsolarblindbriefchestdebutpaintpilotsteamexactquotesweartrendbreadinnerreplytowerwheelprideroughsmelltopicsharptrickaudiochartmountoccurargueawfulboundcloudloosemoralshockthickthrewangelflashgrossrefertrailunclebadlychaseidealclocklabelpitchpizzaplainangercomicghostnewlyskillsolvetrashboostknifesaintstealbuddydelayeliteforthlayermarrynursesheetbenchmedalshellsillyangleforumgrasshencerapidsixthvalidvitalcreekfraudhoneyratioscaryspellswordbegundaddydrovegloryjuicelogicstripdozenfancyinputknockoughtfloodrallyswingalertarenabravefleetrobinshakeshoreblastpoundpunchgravemousepianocraftdevilsauceslidetigeralienbeastcandyfiftyrelaxalarmglobespareoperaquestanimeloverpanicscopealphabrickmercyoutervenuehabitnavalnoblerobottoxicwoundassetbakerbrushessaymakersnakeultrausagecanalclimbfeverfluidnastytwistunityblownfencestoledealtfleshfortylaserloyalpatchradarvillaadoptbladecargohumornervesandysheeptracechillgrainliverrivalsadlysleptspraysuiteverseblesschuckcouchcrushgenreleaseshinetweetreactrockyshadevocalyieldbaconburstsaladstakeswiftawakeblankcurveharshhurrymasonorganpearlsweatalikearrowcabineagleeatenguilthaventheftvalvecharmcrueldeltaridgetribecanonstampvoterwitcharraybellyboothcliffderbyfatallemonsharkdairydiarydrillmeterolivesetupskullsmashbasinbridechickfairyfreakgrieflodgemeritmicrorebeltoothviralwidowbeardcursedrainflameninthpennypettyreignscaresunnycheatcheerchiledemonelderfiberpulserealmshoutalterbrassgraphshookstackagingauditspiteburntbuyerceaseclotheagerelectlobbyorbitranchtrunkbadgecarolferrygaugeridershelfwidthlegitlosersheerstarkthumbwheatwristacutecivicclerkcrudedroneflourpausepuppyslicevinylproberemixsneaksparksteepstrawweighadaptdensekittywhaleamberanklearmorberryclashgrasphandymangapokerscoutsteaksweepcheekcurrydrakepolarskirtspiketoastwaistwreckblendbrakecoughdepotdrankfeastfrostpursetenseveganchessfloatgrindgrovehobbylanceriskysoberspiceswepttowelarisebloomclowndodgeguildpronesiegesixtysonicspineadmincranedonorpastatenthbatchpasteplazastarebluntchampditchscrapshaftslopesnacksternstiffswornunitevaultwagonhomermidstmommyonionrogueabbeybaronbunnychoirhollykarmashinyspoonthiefalleybullymarshmessyroastsalonvaguecoraldoughhardyironymaplerelayrisenstuntivorynicheporchuttercreepelbowexilegoosegrillrulerspillswamptastydecayflownimplymerryresetshavedrifthatchniecescentslatesurgetokenyachtmanorpupilspoilaltarcomboflushhairyounceseizespicystingbelleravenstallstrapblissdaisyfaintforgenotchomegaqueuetroutbravocrawldigitflintjellylunarpeachcedarheathpinchroversyrupdwarflinermergenaivepedrorigidvividboxerbrookhedgejokerladenrainysaltyserumskatestraytempotorchturboaroseblinkchiliexcelglovegreetowingproxyrenewrumorstokethightrollaisleaminobracechokemottoonsetproserazorsteeramplebingocubicmacroshadyslackslickstovetractvistavogueadorecrispcrustfloragammagrapejuicymoodyprankspearstaintidalwrathblazechalkflockhypermoistrabbiscoopscrubshaletraittroopclonedrownjewelpiperscarftimertyingbornedustyfibrefocalnoisysnailtutorvergeyeasterasemanlyoxidepencerepayrougeshovebasilchordcrestdecorfetchfuzzyopticpandaslashsteinbatoncamelchunkcocoacometdreaddummyflankflareleverpedalquerysewersmackswellalignatticawaitcachecomfycondoflickfunkygroomhydrolyricpleaddebittallywedgealloycranklinenmoosemotelresinrustystintwearyagonybingechantcoloncurlymoundmuddyabideavailmadamnannypoppyteasebluffflyerminerneedypattyswipetangoblitzcircacloakdoverdwellfierygoofyjollymummypurgerhinovenomwindyblushfurrymangooddlypaganpsalmrhymesavvyspreevaporwittywovenamendblokecaterdeityfinchsedanslangalgaedollyethicflairhaunthazelslainstashviolayummyadobebrawlquotasworeweavedenimflirtflutemattemorsestooltreadtruceunfitaloudboastbrinkcobrasigmausherannexbargebirchblandbribecanoeciderequiphavochumidmilkymixerpivotsuingarborclingicinglapseloginmimicmuralnasalquasicameodeterdinerenvoyfungigravypsychrinsescalpsquatthornwharfwisercratecraveglossgraftguiseleashmaterrodeoshireswungtabooannoygrailkappaliterplankprivysirensmearsnowystalkstinkswineclampinletmouldquakeracerrecapshakystoutstumpwallyberthmaniaparrypatioprismrenalroachsniffsquidswarmabbotaspenbleakdizzyenacthoundmournpouchshackstaletummywagerwhackblancbroombruteeaterfrozehitchmedicnylonozonerotoragilecarvecrookdiverfilthgeniehubbyledgenataltorsoabyssarsonbasaletherfinergorgelatexmodemmotifpapalperilshearsnooptenorzebrabrothevademaximmistypinkysatintonictwaindittoglandjumboslimespawnwaltzhasteotterrelicreusevicarapronexertglareheftyslumpazurecadetcrazegeesephonycoupeebonyfollyitchylatchloftymaizepickyprimaregalshaltsheensleekslingadeptdoggyeeriefarceflingflungfudgeglideplaidplushsmokyspadevowelbuggycutiedodgyhingemanicmelongloomlimbolousyovertthineviperbeigebulkyincurlatteleafypiggyshrugsonarstonytapertoxincellodetoxferalhastyhuskylipidperchtrussunduewackyassayfishyfrailglazestungwhinebanjobeechcommadogmaevokelowlylucidpetitpoliosaversnucktweakangstbisonexpelfrowngodlygroinhelixhoverknackmachopottysilkystairbrooddandyleachquiltsaunascrumsnarestompsuedetimiduncutwidenbraidbulgefortekayakkneelreconvigilwaivearomabudgecloutcornygirlyhoardhordelottonitroprotoshonetakertriadvalorwightbathegiddymeleemerchnudgepayersergetemptwhiffchicoflakeioniclorrymoverrowdysassywieldbriskdeferflaskfluffgivergnomelymphpalsypolkarepelskierswoopwhoop';
+function gameSalt_() {
+  const pr = PropertiesService.getScriptProperties(); let s = pr.getProperty('GAME_SALT');
+  if (!s) { s = Utilities.getUuid(); pr.setProperty('GAME_SALT', s); }
+  return s;
+}
+function gameOrder_() {
+  if (MEMO_.gameOrder) return MEMO_.gameOrder;
+  const n = GAME_WORDS_.length / 5, idx = []; for (let i = 0; i < n; i++) idx.push(i);
+  let h = Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, gameSalt_()).slice(0, 4).reduce((a, b) => (a * 256 + ((b + 256) % 256)) >>> 0, 0) || 1;
+  const rnd = () => { h ^= h << 13; h >>>= 0; h ^= h >>> 17; h ^= h << 5; h >>>= 0; return h / 4294967296; };   // xorshift32
+  for (let i = n - 1; i > 0; i--) { const j = Math.floor(rnd() * (i + 1)); const t = idx[i]; idx[i] = idx[j]; idx[j] = t; }
+  return (MEMO_.gameOrder = idx);
+}
+function gameNo_(ymd) { return daysBetween_(GAME_START_, ymd) + 1; }
+function gameWord_(ymd) { const o = gameOrder_(), n = o.length, k = ((gameNo_(ymd) - 1) % n + n) % n; return GAME_WORDS_.substr(o[k] * 5, 5); }
+/** 'g' right spot, 'y' in the word, 'b' not in it (repeated letters count only as often as the answer has them). */
+function gameMarks_(guess, ans) {
+  const out = ['b', 'b', 'b', 'b', 'b'], left = {};
+  for (let i = 0; i < 5; i++) { if (guess[i] === ans[i]) out[i] = 'g'; else left[ans[i]] = (left[ans[i]] || 0) + 1; }
+  for (let i = 0; i < 5; i++) if (out[i] !== 'g' && left[guess[i]]) { out[i] = 'y'; left[guess[i]]--; }
+  return out.join('');
+}
+function gameWeekOf_(ymd) { return addDays_(ymd, -((dow_(ymd) + 6) % 7)); }   // the Monday
+function gamePoints_(r) { return r.result === 'Solved' ? 7 - r.guesses.length : 0; }
+function gameRows_(ss, tz) {
+  return rows_(ss, 'Game').filter(r => r[0] && r[1]).map(r => ({ day: ymd_(r[0], tz), who: String(r[1]), guesses: String(r[2] || '').split(',').filter(Boolean),
+    result: /^(Solved|Missed)$/.test(String(r[3])) ? String(r[3]) : '' })).filter(r => r.day);
+}
+const gameGrid_ = (g, ans) => g.map(x => gameMarks_(x, ans).replace(/g/g, '🟩').replace(/y/g, '🟨').replace(/b/g, '⬜')).join('\n');
+/** Standings for one Monday–Sunday week. */
+function gameWeek_(rows, from) {
+  const to = addDays_(from, 6), by = {};
+  rows.filter(r => r.result && r.day >= from && r.day <= to).forEach(r => {
+    const s = by[r.who] = by[r.who] || { who: r.who, pts: 0, played: 0, solved: 0, tries: 0, days: {} };
+    s.played++; s.pts += gamePoints_(r); if (r.result === 'Solved') { s.solved++; s.tries += r.guesses.length; }
+    s.days[daysBetween_(from, r.day)] = r.result === 'Solved' ? r.guesses.length : 'x';
+  });
+  const list = Object.keys(by).map(k => by[k]).sort((a, b) => b.pts - a.pts || (a.solved ? a.tries / a.solved : 9) - (b.solved ? b.tries / b.solved : 9) || a.who.localeCompare(b.who));
+  return { from, to, rows: list.map(s => Object.assign(s, { avg: s.solved ? Math.round(s.tries / s.solved * 10) / 10 : null })) };
+}
+function gameChamps_(wk) { const top = wk.rows.length ? wk.rows[0].pts : 0; return top > 0 ? wk.rows.filter(r => r.pts === top).map(r => r.who) : []; }
+
+function game_(ss, tz, today, me) {
+  gameWeeklyCatchUp_(ss, tz, today);
+  const rows = gameRows_(ss, tz), ans = gameWord_(today), no = gameNo_(today);
+  const mineRow = rows.find(r => r.day === today && r.who === me.name), mine = mineRow ? { g: mineRow.guesses, r: mineRow.result } : { g: [], r: '' };
+  const done = !!mine.r;
+  const todayList = rows.filter(r => r.day === today && r.who !== me.name && (r.result || r.guesses.length))
+    .map(r => ({ who: r.who, n: r.guesses.length, r: r.result, marks: done && r.result ? r.guesses.map(g => gameMarks_(g, ans)) : [] }));
+  const week = gameWeek_(rows, gameWeekOf_(today));
+  // all-time: weekly titles, played, solved, streaks, guess spread
+  const titles = {}, weeks = rows_(ss, 'Game weeks').filter(r => r[0] && r[1]);
+  weeks.forEach(r => splitList_(String(r[1]).replace(/ & /g, ',')).forEach(n => { titles[n] = (titles[n] || 0) + 1; }));
+  const ppl = {}; rows.filter(r => r.result).forEach(r => { (ppl[r.who] = ppl[r.who] || []).push(r); });
+  const all = Object.keys(ppl).map(who => {
+    const rs = ppl[who].sort((a, b) => a.day.localeCompare(b.day)), solvedDays = {}, spread = [0, 0, 0, 0, 0, 0];
+    rs.forEach(r => { if (r.result === 'Solved') { solvedDays[r.day] = 1; spread[r.guesses.length - 1]++; } });
+    let best = 0, run = 0, prev = '';
+    rs.forEach(r => { if (r.result !== 'Solved') { run = 0; prev = r.day; return; } run = prev && daysBetween_(prev, r.day) === 1 && run ? run + 1 : 1; prev = r.day; best = Math.max(best, run); });
+    let cur = 0, d = solvedDays[today] ? today : addDays_(today, -1); while (solvedDays[d]) { cur++; d = addDays_(d, -1); }
+    const solved = rs.filter(r => r.result === 'Solved').length;
+    return { who, titles: titles[who] || 0, played: rs.length, solved, streak: cur, best, spread };
+  }).sort((a, b) => b.titles - a.titles || b.solved - a.solved || a.who.localeCompare(b.who));
+  const lw = weeks[weeks.length - 1];
+  const last = lw ? { from: ymd_(lw[0], tz), champs: splitList_(String(lw[1]).replace(/ & /g, ',')), pts: Number(lw[2]) || 0 } : null;
+  const key = 7 + (no % 11);
+  return { name: GAME_NAME_, day: today, no, done,
+    w: done ? ans : Utilities.base64Encode(ans.split('').map((c, i) => String.fromCharCode(c.charCodeAt(0) ^ (key + i))).join('')), k: key,
+    mine, today: todayList, week, last: last && last.from !== week.from ? last : null, all };
+}
+
+function gameAct_(ss, p, me, today, tz) {
+  const sh = ss.getSheetByName('Game'); if (!sh) throw new Error('The Game tab is missing. Ask the organizer to run Dashboard › 1. Set up.');
+  if (p.action === 'gameShare') return gameShare_(ss, me, today, tz);
+  if (String(p.day) !== today) throw new Error("That was yesterday's word – today's is ready");
+  const g = String(p.guess || '').toLowerCase().trim();
+  if (!/^[a-z]{5}$/.test(g)) throw new Error('Guesses are five letters');
+  const v = sh.getLastRow() > 1 ? sh.getRange(2, 1, sh.getLastRow() - 1, 6).getValues() : [];
+  let i = v.findIndex(r => ymd_(r[0], tz) === today && String(r[1]) === me.name);
+  const cur = i >= 0 ? String(v[i][2] || '').split(',').filter(Boolean) : [];
+  if (i >= 0 && /^(Solved|Missed)$/.test(String(v[i][3]))) return;           // already finished (a repeat from a slow phone)
+  if (cur.length >= 6) return;
+  const ans = gameWord_(today), list = cur.concat(g), res = g === ans ? 'Solved' : list.length >= 6 ? 'Missed' : '';
+  const row = [today, me.name, list.join(','), res, res === 'Solved' ? 7 - list.length : res ? 0 : '', res ? new Date() : ''];
+  if (i >= 0) sh.getRange(i + 2, 1, 1, 6).setValues([row]); else { sh.appendRow(row); }
+}
+/** Posts your result (squares only, no letters) to the Everyone chat, as you. */
+function gameShare_(ss, me, today, tz) {
+  const r = gameRows_(ss, tz).find(x => x.day === today && x.who === me.name);
+  if (!r || !r.result) throw new Error('Finish today\'s word first');
+  const ans = gameWord_(today), wk = gameWeek_(gameRows_(ss, tz), gameWeekOf_(today)), rank = wk.rows.findIndex(x => x.who === me.name) + 1;
+  const text = GAME_NAME_ + ' #' + gameNo_(today) + '  ' + (r.result === 'Solved' ? r.guesses.length : 'X') + '/6\n' + gameGrid_(r.guesses, ans) +
+    (rank ? '\n' + (rank === 1 ? '🥇 ' : '') + 'This week: #' + rank + ' · ' + wk.rows[rank - 1].pts + ' pts' : '');
+  gamePost_(ss, text, me);
+}
+/** A message into the Everyone channel: live chat if it's set up, otherwise the Messages tab. from = a person (shares) or nothing (the weekly update). */
+function gamePost_(ss, text, from) {
+  if (!config_(ss).features['Messages']) return false;
+  if (chatLive_(ss)) {
+    chatSyncRoster_(ss);
+    const r = chatPost_(ss, 'system', from && from.id ? { ch: 'general', uid: from.id, name: from.name, text } : { ch: 'general', uid: 'game', name: '🎯 ' + GAME_NAME_, text });
+    if (r && r.ok === false) chatPost_(ss, 'system', { match: '^everyone$', uid: from && from.id || 'game', name: from && from.id ? from.name : '🎯 ' + GAME_NAME_, text });
+  } else {
+    const sh = ss.getSheetByName('Messages'); if (!sh) return false;
+    const ch = (rows_(ss, 'Channels').find(r => String(r[0]) === 'general') || rows_(ss, 'Channels').find(r => /^everyone$/i.test(String(r[1]))) || [])[0]; if (!ch) return false;
+    sh.appendRow(['m' + Utilities.getUuid().replace(/-/g, '').slice(0, 11), String(ch), from && from.id || 'game', from && from.id ? from.name : '🎯 ' + GAME_NAME_, new Date(), clean_(text, 2000, true), '', '', '']);
+  }
+  return true;
+}
+
+/** Monday's update: last week's champion and standings → Everyone chat + a notification. Safe to run more than once (it posts each week once). */
+function gameWeekly() {
+  memoReset_(false);
+  const ss = SpreadsheetApp.getActive(), tz = ss.getSpreadsheetTimeZone(), today = Utilities.formatDate(new Date(), tz, 'yyyy-MM-dd');
+  if (!config_(ss).features[GAME_NAME_]) return 'off';
+  return gameWeeklyPost_(ss, tz, addDays_(gameWeekOf_(today), -7));
+}
+function gameWeeklyCatchUp_(ss, tz, today) {           // nobody's trigger ran yet this week: the first visit posts it
+  const from = addDays_(gameWeekOf_(today), -7), c = CacheService.getScriptCache(), k = 'gameWeek_' + from;
+  if (c.get(k) || !ss.getSheetByName('Game weeks')) return;
+  if (rows_(ss, 'Game weeks').some(r => ymd_(r[0], tz) === from)) { c.put(k, '1', 21600); return; }
+  if (!gameRows_(ss, tz).some(r => r.result && r.day >= from && r.day < gameWeekOf_(today))) { c.put(k, '1', 3600); return; }
+  const lock = LockService.getScriptLock(); if (!lock.tryLock(3000)) return;
+  try { memoReset_(false); gameWeeklyPost_(ss, tz, from); c.put(k, '1', 21600); } catch (e) {} finally { lock.releaseLock(); memoReset_(true); }
+}
+function gameWeeklyPost_(ss, tz, from) {
+  const wsh = ss.getSheetByName('Game weeks'); if (!wsh) return 'no tab';
+  if (rows_(ss, 'Game weeks').some(r => ymd_(r[0], tz) === from)) return 'already posted';
+  const rows = gameRows_(ss, tz), wk = gameWeek_(rows, from);
+  if (!wk.rows.length) return 'nobody played';
+  const champs = gameChamps_(wk), medal = ['🥇', '🥈', '🥉'];
+  let rank = 0, prevPts = null;
+  const lines = wk.rows.map((r, i) => { if (r.pts !== prevPts) { rank = i + 1; prevPts = r.pts; } return (medal[rank - 1] || rank + '.') + ' ' + r.who + ' – ' + r.pts + ' pts (' + r.solved + '/' + r.played + ' solved' + (r.avg ? ', avg ' + r.avg : '') + ')'; });
+  const fast = rows.filter(r => r.result === 'Solved' && r.day >= from && r.day <= wk.to).sort((a, b) => a.guesses.length - b.guesses.length)[0];
+  const fastAll = fast ? rows.filter(r => r.result === 'Solved' && r.day >= from && r.day <= wk.to && r.guesses.length === fast.guesses.length) : [];
+  const wkName = Utilities.formatDate(parseYmd_(from), Session.getScriptTimeZone(), 'MMM d');
+  const text = '🏆 ' + GAME_NAME_ + ' – week of ' + wkName + '\n' +
+    (champs.length ? (champs.length > 1 ? 'Champions: ' + champs.join(' & ') : 'Champion: ' + champs[0]) + ' with ' + wk.rows[0].pts + ' points!' : 'No one solved a word this week.') + '\n\n' +
+    lines.join('\n') +
+    (fast ? '\n\n⚡ Quickest solve: ' + fastAll.map(r => r.who + ' (#' + gameNo_(r.day) + ')').filter((x, i, a) => a.indexOf(x) === i).slice(0, 3).join(', ') + ' in ' + fast.guesses.length + (fast.guesses.length === 1 ? ' guess' : ' guesses') : '') +
+    '\n\nEveryone starts this week at 0. Good luck! 🍀';
+  wsh.appendRow([from, champs.join(' & '), champs.length ? wk.rows[0].pts : 0, lines.join('\n'), new Date()]);
+  SpreadsheetApp.flush();
+  let posted = false; try { posted = gamePost_(ss, text); } catch (e) { console.warn('Daily Word weekly post: ' + e.message); }
+  try {
+    const ppl = rows_(ss, 'People').filter(r => r[0] && r[9] && truthy_(r[7]));
+    push_(ss, ppl.map(r => ({ uid: String(r[9]), kind: 'msg', direct: false, title: '🏆 ' + GAME_NAME_ + ': ' + (champs.length ? champs.join(' & ') + ' won the week' : 'new week'),
+      body: champs.length ? champs.join(' & ') + ' finished on top with ' + wk.rows[0].pts + ' points. Everyone starts this week at 0.' : 'Everyone starts this week at 0.', url: posted ? '?go=chat:general' : '?go=game', tag: 'game-week' })));
+  } catch (e) { console.warn('Daily Word weekly push: ' + e.message); }
+  return 'posted';
+}
+/** Makes (once) the Monday-morning trigger for the weekly update. */
+function gameTrigger_() {
+  try {
+    if (ScriptApp.getProjectTriggers().some(t => t.getHandlerFunction() === 'gameWeekly')) return true;
+    ScriptApp.newTrigger('gameWeekly').timeBased().onWeekDay(ScriptApp.WeekDay.MONDAY).atHour(8).create();
+    return true;
+  } catch (e) { console.warn('Daily Word trigger: ' + e.message); return false; }
+}
+/** Menu: post last week's update now (if it hasn't gone out). */
+function gameWeeklyNow() { const r = gameWeekly(); ui_().alert(GAME_NAME_, r === 'posted' ? "Last week's results are in the Everyone chat." : r === 'already posted' ? "Last week's results were already posted." : r === 'nobody played' ? 'Nobody played last week, so there is nothing to post.' : 'Turn on ' + GAME_NAME_ + ' on the Features tab first.', ui_().ButtonSet.OK); }
 
 /* ============================================================
    Dashboard calendar: Events tab, outside iCal links, subscription feeds

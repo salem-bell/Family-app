@@ -11,5 +11,8 @@ The installable phone app for the family dashboard. It opens at **https://salem-
 1. Change the app, then bump VERSION in sw.js so phones pick it up.
 2. If Code.gs changed: paste it over the one in Apps Script, then Deploy › Manage deployments › pencil › **New version** › Deploy.
 
+## Daily Word
+A word game a day (the **Daily Word** tab), with a weekly leaderboard. Guesses save to the sheet's *Game* tab; each Monday the week's results go to the Everyone chat and the *Game weeks* tab (a Monday 8 AM trigger made by Dashboard › 1. Set up, or the first app visit that Monday). Dashboard › Post the Daily Word results for last week sends it by hand.
+
 ## Notifications
 They use the same Cloudflare Worker as the Peregrine Team app. The sheet's Settings tab needs Push service address, Push service secret and Push public key (copy them from the Peregrine sheet's Settings).
