@@ -727,8 +727,7 @@ function applyLook(){
   document.body.className = cls; document.documentElement.className = look + twin + (large ? ' large' : '');
   const tc = document.querySelector('meta[name=theme-color]'); if (tc){ const bg = getComputedStyle(document.body).getPropertyValue(look === 'sky' ? '--sky' : /^lavender/.test(look) ? '--hbg' : '--bg').trim(); if (bg) tc.setAttribute('content', bg); }
   if (brandLook) document.body.style.removeProperty('--accent'); else document.body.style.setProperty('--accent', /^(dark|papernight)$/.test(look) ? lighten(data.accent || '#50602B', .38) : (data.accent || '#50602B'));
-  const crest = /^lavender/.test(look) ? (window.FAMILY_API ? 'brand/bellah-crest.png' : 'https://salem-bell.github.io/Family-app/brand/bellah-crest.png') : '';
-  const lg = $('#logo'), logo = data.logo || crest; if (logo){ if (lg.getAttribute('src') !== logo) lg.src = logo; lg.hidden = false; } else lg.hidden = true;
+  showLogo(data.logo);
   $('#tagline').textContent = data.tagline || '';
 }
 /* ----- icon badge: unread messages as a number on the app icon (installed apps; iPhone needs notifications on) ----- */
@@ -739,12 +738,18 @@ function syncBadge(){
   try { if ('setAppBadge' in navigator) (n ? navigator.setAppBadge(n) : navigator.clearAppBadge()).catch(() => {}); } catch (_) {}
   try { caches.open('chat-pass').then(c => c.put('/badge', new Response(String(n)))).catch(() => {}); } catch (_) {}   // the notification handler counts up from here
 }
+/* A logo link in Settings wins; otherwise the family mark, coloured by the theme. */
+function showLogo(custom){
+  const lg = $('#logo'), mk = $('#logomark'); if (!lg || !mk) return;
+  if (custom){ if (lg.getAttribute('src') !== custom) lg.src = custom; lg.hidden = false; mk.hidden = true; }
+  else { lg.hidden = true; mk.hidden = false; const b = $('#brand'); if (b) mk.style.background = getComputedStyle(b).color; }   // same colour as the title beside it
+}
 function render(){
   syncBadge();
   const now = new Date();
   if (!data && signInfo && signInfo.name){ const L = ['paper', 'light', 'dark', 'ivory', 'burgundy', 'sky', 'lavender'], lk = L.indexOf(signInfo.look) >= 0 ? signInfo.look : 'paper';
     document.documentElement.className = lk; document.body.className = lk + (/ivory|burgundy|sky|lavender/.test(lk) ? ' paper' : ''); $('#brand').textContent = signInfo.name; document.title = signInfo.name;
-    const lg = $('#logo'); if (signInfo.logo){ lg.src = signInfo.logo; lg.hidden = false; } }
+    showLogo(signInfo.logo); }
   if (!data){ $('#nav').innerHTML = ''; $('#nav').hidden = true; $('#menubtn').hidden = true; $('#me').innerHTML = ''; $('#main').innerHTML = (lastErr === 'nokey' || lastErr === 'badkey' || lastErr === 'expired') ? viewUnlock() : lastErr ? viewProblem() : `<div class="empty">Loading…</div>`; return; }
   applyLook();
   $('#brand').textContent = data.name || 'Dashboard'; document.title = data.name || 'Dashboard';
