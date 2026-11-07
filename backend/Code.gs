@@ -41,7 +41,7 @@ const FEATURES = [
   ['Recipes',            'recipes',   [0, 0, 1], 'The family cookbook: ingredients, steps and whose recipe it is.',         'The app, or the Recipes tab', ['Recipes']],
   ['Marketplace',        'market',    [0, 0, 1], 'Give things away or ask for a hand – tagged by region, so people nearby see it first.', 'The app; Settings › Regions', ['Marketplace']],
   ['Stories',            'stories',   [0, 0, 1], 'Family stories and memories, so they don\'t get lost.',                      'The app, or the Stories tab', ['Stories']],
-  ['Daily Word',         'game',      [0, 0, 1], 'A five-letter word game everyone plays once a day, with a weekly leaderboard. Monday\'s results go to the Everyone chat.', 'The app (Dashboard › Post the Daily Word results posts last week now)', ['Game', 'Game weeks']],
+  ['Games',              'games',     [0, 0, 1], 'Two quick daily games – Daily Word and Family Map – with one weekly leaderboard. Monday\'s results go to the Everyone chat.', 'The app; Map places tab (your own places for the map); Settings › Family places per day', ['Game', 'Map plays', 'Map places', 'Game weeks']],
   ['Inventory alerts',   'inventory', [0, 0, 0], 'Items below par (for a pantry, supplies or a shop).',                        'Inventory tab', ['Inventory']],
 ];
 const ED_INDEX = { personal: 0, couple: 1, family: 2 };
@@ -78,6 +78,8 @@ const TABS = {
   'Marketplace': ['ID', 'Posted', 'From', 'Type', 'What', 'Details', 'Region', 'Status', 'Taken by', 'Updated'],
   'Stories':     ['ID', 'Posted', 'From', 'Title', 'Story', 'About (who)', 'When it happened', 'Photo link'],
   'Game':        ['Date', 'Person', 'Guesses', 'Result', 'Points', 'Finished at'],
+  'Map plays':   ['Date', 'Person', 'Taps (lat,lng per place)', 'Scores', 'Total', 'Finished at'],
+  'Map places':  ['Place (a name Google Maps can find, or "lat, lng")', 'Shown as (optional)', 'Latitude', 'Longitude', 'On a date (optional)', 'Added by'],
   'Game weeks':  ['Week of (Monday)', 'Champion', 'Points', 'Standings', 'Posted'],
   'Recipes':     ['Recipe', 'From', 'Category', 'Ingredients', 'Steps', 'Link', 'Added by'],
   // system tabs
@@ -143,6 +145,7 @@ const SETTINGS = [
   ['Logo image link',       ['', ''],                                'Optional. A link to a small PNG or JPG (under 70 KB) shown at the top of the app. For a Google Drive file: Share › Anyone with the link, then paste the link here.'],
   ['Tagline',               ['', ''],                                'Optional. A short line under the name, like a date or a motto.'],
   ['Accent color',          ['#50602B', '#2F6FB2'],                  'Any color code, like #2F6FB2.'],
+  ['Family places per day', ['2', '2', '2'],                       'Family Map: how many places from the Map places tab to use each day (0–5). The rest are picked at random. With an empty Map places tab, every place is random.'],
 ];
 
 /* ============================================================
@@ -156,7 +159,7 @@ function onOpen() {
     .addItem('New link for the selected person', 'resetSelected')
     .addItem('New links for everyone', 'resetAll')
     .addSeparator()
-    .addItem('Post the Daily Word results for last week', 'gameWeeklyNow')
+    .addItem('Post last week\'s game results', 'gameWeeklyNow')
     .addToUi();
 }
 
@@ -178,7 +181,7 @@ function setup() {
   Object.keys(TABS).forEach(t => { if (ss.getSheetByName(t)) buildTab_(ss, t, ed); });   // older copies: add new columns
   SYSTEM_TABS.forEach(t => buildTab_(ss, t, ed));
   ensureKeys_(ss, isCopy);
-  const gameNote = on[GAME_NAME_] && !gameTrigger_() ? '\n\nThe Daily Word could not set up its Monday update (Apps Script needs permission for triggers). The first person to open the app each Monday will post it instead.' : '';
+  const gameNote = on[GAMES_] && !gameTrigger_() ? '\n\nGames could not set up its Monday update (Apps Script needs permission for triggers). The first person to open the app each Monday will post it instead.' : '';
   if (isCopy) PropertiesService.getScriptProperties().setProperties({ SHEET_ID: ss.getId() });
 
   ['Start Here', 'Settings', 'Features', 'People'].forEach((n, i) => move_(ss, n, i + 1));
@@ -219,7 +222,9 @@ function buildSettings_(ss, ed) {
 function buildFeatures_(ss, ed) {
   let sh = ss.getSheetByName('Features');
   if (!sh) { sh = ss.insertSheet('Features'); sh.getRange(1, 1, 1, 4).setValues([['Feature', 'On?', 'What it shows', 'Set it up in']]); }
-  const have = colValues_(sh, 1);
+  let have = colValues_(sh, 1);
+  const old = have.indexOf('Daily Word');                    // v3.5 test name → Games
+  if (old > 0 && have.indexOf('Games') < 0) { sh.getRange(old + 1, 1, 1, 4).setValues([['Games', sh.getRange(old + 1, 2).getValue() === true, FEATURES.find(f => f[0] === 'Games')[3], FEATURES.find(f => f[0] === 'Games')[4]]]); have = colValues_(sh, 1); }
   FEATURES.forEach(f => { if (have.indexOf(f[0]) < 0) sh.appendRow([f[0], pickEd_(f[2], ed) === 1, f[3], f[4]]); });
   sh.getRange(2, 2, sh.getLastRow() - 1, 1).insertCheckboxes();
   header_(sh, 4);
@@ -239,7 +244,8 @@ function buildTab_(ss, name, ed, legacyPeople) {
   header_(sh, header.length);
   if (name === 'Gatherings') [3, 4, 8].forEach(c => sh.getRange(2, c, 499, 1).setNumberFormat('@'));
   if (name === 'Polls') sh.getRange(2, 4, 499, 1).setNumberFormat('@');
-  if (name === 'Game' || name === 'Game weeks') sh.getRange(2, 1, 1999, 1).setNumberFormat('@');
+  if (name === 'Game' || name === 'Game weeks' || name === 'Map plays') sh.getRange(2, 1, 1999, 1).setNumberFormat('@');
+  if (name === 'Map places') sh.getRange(2, 5, 499, 1).setNumberFormat('@');
   if (name === 'Events') [2, 3, 4, 9].forEach(c => sh.getRange(2, c, 499, 1).setNumberFormat('@'));   // keep dates/times as typed
   let ex = examples_(ss, name, ed || guessEdition_(ss));
   if (name === 'People' && legacyPeople && legacyPeople.length)
@@ -549,7 +555,7 @@ function state_(ss, me) {
   out.recipes   = run('Recipes', () => recipes_(ss));
   out.market    = run('Marketplace', () => market_(ss, tz, today));
   out.stories   = run('Stories', () => stories_(ss));
-  out.game      = run(GAME_NAME_, () => game_(ss, tz, today, me));
+  out.game      = run(GAMES_, () => game_(ss, tz, today, me));
   if (out.market) out.regions = splitList_(setting_(ss, 'Regions'));
   if (on['Messages'] && me.id) { try { out.meId = me.id; out.active = activeMap_(ss, me);
       if (chatLive_(ss)) { out.chat = { url: setting_(ss, 'Chat service address').replace(/\/+$/, '') }; out.channels = []; } else out.channels = channels_(ss, me); } catch (e) { errors.push('Messages: ' + e.message); } }
@@ -843,7 +849,7 @@ function act_(ss, p, me) {
 
   if (/^(newChannel|editChannel|deleteMessage)$/.test(A)) return chatAct_(ss, p, me);
   if (/^push(Sub|Unsub|Prefs|Test)$/.test(A)) return pushAct_(ss, p, me);
-  if (/^game(Guess|Share)$/.test(A)) return gameAct_(ss, p, me, today, tz);
+  if (/^(game(Guess|Share)|map(Guess|PlaceAdd|PlaceDel))$/.test(A)) return gameAct_(ss, p, me, today, tz);
   switch (A) {
     case 'saveView': {
       const sh = sheet('Views'), names = colValues_(sh, 1), i = names.indexOf(who);
@@ -1147,29 +1153,46 @@ function familyExamples_(name, d) {
 }
 
 /* ============================================================
-   Daily Word: one five-letter word a day for the whole family (6 tries).
-   Points: solved in 1 = 6 … solved in 6 = 1, missed = 0. Weeks run Monday–Sunday.
-   Every Monday the week's results go to the Everyone chat (a weekly trigger, or the first app visit that Monday).
-   The answer order is shuffled with a secret kept in Script Properties, so the list in this file doesn't give the days away.
+   Games: two quick daily games for the whole family, on one tab, with one weekly leaderboard.
+   • Daily Word – one five-letter word a day, 6 tries. Points: solved in 1 = 6 … in 6 = 1, missed = 0.
+   • Family Map – 5 places a day; tap where each one is. Up to 100 per place by distance; the day's
+     total ÷ 100 (rounded) goes on the leaderboard (0–5). Places come from the Map places tab
+     (Settings › Family places per day of them), and the rest are picked at random from a built-in list.
+   Weeks run Monday–Sunday. Every Monday the week's results go to the Everyone chat (a weekly trigger,
+   or the first app visit that Monday).
+   The answers are shuffled with a secret kept in Script Properties, so this file doesn't give the days away.
    ============================================================ */
-const GAME_START_ = '2026-11-06';   // puzzle #1
-const GAME_NAME_ = 'Daily Word';
+const GAMES_ = 'Games';                    // the feature name
+const GAME_START_ = '2026-11-06';          // game #1
 const GAME_WORDS_ = 'abouttheirtherewhichwouldotherafterfirstthinkcouldthesewhererightbeinggoingstillneverthoseworldgreatwhileeverystatethreesinceunderthinghouseplaceagainfoundmightmoneynightuntildoinggroupstarttodaypointmusicpowerwatersmallwhitelaterorderpartythankblackwholemaybestoryleastearlylocalvideoyoungcourtgivenleveloftensouthknownlargewrongalongclassclosecausehappyhumanwomanleavenorthwatchlightshorttakenthirdamongcheckheartchildmajormediaphonequitefinalfrontreadybringmarchstudyclearmonthboardfieldfightforceissuepricespacetotalabovesharesensebreakeventsorryguesslearnalonemoviepressworthsoundvalueroundstandstuffdrivegreenmatchmodeltrustrangetradechieflowerstylebloodstagetitleenjoycoverlegalsevenstaffsuperunionbuiltcrazydailypapervoicewhoseearthbelowoffersleeptabletruthbuildpiecevisitwroterivershallspeakwritealbumeightfunnypeacespentstoretrackaheadallowbrownradiocrossextraquickagreecleanphotoscenespendcoachheavytrainclaimhoteljudgebrainfloorimagemeantreachcivildancestockworstbeacholdercolordreamgrandsweettouchdoubtdrinkshownbasiccarrycrimefullyplantworseawardblockavoidcatchcoasttrialtrulyqueenbrokeglasspriorroyalservebegintwiceworrybrandcountfreshmouthownerscalescoresmartthrowclickfaithmetalagentapplyenterprimewasteweirdadultgradestoneapartawarefifthbirthlaborluckyprovetoughaliveappledresshorsemagicstickguideraisetreatyouthexistguardshootsolidsporttastehelloplaneshapeuppercheapjointsteelcrowdenemylimitoceanproofchairhonoremailstucksugardramaentrygrantgrownlyingroutesmokesquadteachangrylaughlunchstormactorchainequalquietspliturbanfaultphasesmiletruckblamefalsenovelshirtcreamgiantmayorminorthemeusualdraftspokeupsetcycleasideemptyprizeruraladmitfavorframeguestteethbunchfruitindexshiftstoodtightcrowngracechosecrashdepthdirtyerrornoisepanelplateshamecableprintsightbroaddrawnmotorsolarblindbriefchestdebutpaintpilotsteamexactquotesweartrendbreadinnerreplytowerwheelprideroughsmelltopicsharptrickaudiochartmountoccurargueawfulboundcloudloosemoralshockthickthrewangelflashgrossrefertrailunclebadlychaseidealclocklabelpitchpizzaplainangercomicghostnewlyskillsolvetrashboostknifesaintstealbuddydelayeliteforthlayermarrynursesheetbenchmedalshellsillyangleforumgrasshencerapidsixthvalidvitalcreekfraudhoneyratioscaryspellswordbegundaddydrovegloryjuicelogicstripdozenfancyinputknockoughtfloodrallyswingalertarenabravefleetrobinshakeshoreblastpoundpunchgravemousepianocraftdevilsauceslidetigeralienbeastcandyfiftyrelaxalarmglobespareoperaquestanimeloverpanicscopealphabrickmercyoutervenuehabitnavalnoblerobottoxicwoundassetbakerbrushessaymakersnakeultrausagecanalclimbfeverfluidnastytwistunityblownfencestoledealtfleshfortylaserloyalpatchradarvillaadoptbladecargohumornervesandysheeptracechillgrainliverrivalsadlysleptspraysuiteverseblesschuckcouchcrushgenreleaseshinetweetreactrockyshadevocalyieldbaconburstsaladstakeswiftawakeblankcurveharshhurrymasonorganpearlsweatalikearrowcabineagleeatenguilthaventheftvalvecharmcrueldeltaridgetribecanonstampvoterwitcharraybellyboothcliffderbyfatallemonsharkdairydiarydrillmeterolivesetupskullsmashbasinbridechickfairyfreakgrieflodgemeritmicrorebeltoothviralwidowbeardcursedrainflameninthpennypettyreignscaresunnycheatcheerchiledemonelderfiberpulserealmshoutalterbrassgraphshookstackagingauditspiteburntbuyerceaseclotheagerelectlobbyorbitranchtrunkbadgecarolferrygaugeridershelfwidthlegitlosersheerstarkthumbwheatwristacutecivicclerkcrudedroneflourpausepuppyslicevinylproberemixsneaksparksteepstrawweighadaptdensekittywhaleamberanklearmorberryclashgrasphandymangapokerscoutsteaksweepcheekcurrydrakepolarskirtspiketoastwaistwreckblendbrakecoughdepotdrankfeastfrostpursetenseveganchessfloatgrindgrovehobbylanceriskysoberspiceswepttowelarisebloomclowndodgeguildpronesiegesixtysonicspineadmincranedonorpastatenthbatchpasteplazastarebluntchampditchscrapshaftslopesnacksternstiffswornunitevaultwagonhomermidstmommyonionrogueabbeybaronbunnychoirhollykarmashinyspoonthiefalleybullymarshmessyroastsalonvaguecoraldoughhardyironymaplerelayrisenstuntivorynicheporchuttercreepelbowexilegoosegrillrulerspillswamptastydecayflownimplymerryresetshavedrifthatchniecescentslatesurgetokenyachtmanorpupilspoilaltarcomboflushhairyounceseizespicystingbelleravenstallstrapblissdaisyfaintforgenotchomegaqueuetroutbravocrawldigitflintjellylunarpeachcedarheathpinchroversyrupdwarflinermergenaivepedrorigidvividboxerbrookhedgejokerladenrainysaltyserumskatestraytempotorchturboaroseblinkchiliexcelglovegreetowingproxyrenewrumorstokethightrollaisleaminobracechokemottoonsetproserazorsteeramplebingocubicmacroshadyslackslickstovetractvistavogueadorecrispcrustfloragammagrapejuicymoodyprankspearstaintidalwrathblazechalkflockhypermoistrabbiscoopscrubshaletraittroopclonedrownjewelpiperscarftimertyingbornedustyfibrefocalnoisysnailtutorvergeyeasterasemanlyoxidepencerepayrougeshovebasilchordcrestdecorfetchfuzzyopticpandaslashsteinbatoncamelchunkcocoacometdreaddummyflankflareleverpedalquerysewersmackswellalignatticawaitcachecomfycondoflickfunkygroomhydrolyricpleaddebittallywedgealloycranklinenmoosemotelresinrustystintwearyagonybingechantcoloncurlymoundmuddyabideavailmadamnannypoppyteasebluffflyerminerneedypattyswipetangoblitzcircacloakdoverdwellfierygoofyjollymummypurgerhinovenomwindyblushfurrymangooddlypaganpsalmrhymesavvyspreevaporwittywovenamendblokecaterdeityfinchsedanslangalgaedollyethicflairhaunthazelslainstashviolayummyadobebrawlquotasworeweavedenimflirtflutemattemorsestooltreadtruceunfitaloudboastbrinkcobrasigmausherannexbargebirchblandbribecanoeciderequiphavochumidmilkymixerpivotsuingarborclingicinglapseloginmimicmuralnasalquasicameodeterdinerenvoyfungigravypsychrinsescalpsquatthornwharfwisercratecraveglossgraftguiseleashmaterrodeoshireswungtabooannoygrailkappaliterplankprivysirensmearsnowystalkstinkswineclampinletmouldquakeracerrecapshakystoutstumpwallyberthmaniaparrypatioprismrenalroachsniffsquidswarmabbotaspenbleakdizzyenacthoundmournpouchshackstaletummywagerwhackblancbroombruteeaterfrozehitchmedicnylonozonerotoragilecarvecrookdiverfilthgeniehubbyledgenataltorsoabyssarsonbasaletherfinergorgelatexmodemmotifpapalperilshearsnooptenorzebrabrothevademaximmistypinkysatintonictwaindittoglandjumboslimespawnwaltzhasteotterrelicreusevicarapronexertglareheftyslumpazurecadetcrazegeesephonycoupeebonyfollyitchylatchloftymaizepickyprimaregalshaltsheensleekslingadeptdoggyeeriefarceflingflungfudgeglideplaidplushsmokyspadevowelbuggycutiedodgyhingemanicmelongloomlimbolousyovertthineviperbeigebulkyincurlatteleafypiggyshrugsonarstonytapertoxincellodetoxferalhastyhuskylipidperchtrussunduewackyassayfishyfrailglazestungwhinebanjobeechcommadogmaevokelowlylucidpetitpoliosaversnucktweakangstbisonexpelfrowngodlygroinhelixhoverknackmachopottysilkystairbrooddandyleachquiltsaunascrumsnarestompsuedetimiduncutwidenbraidbulgefortekayakkneelreconvigilwaivearomabudgecloutcornygirlyhoardhordelottonitroprotoshonetakertriadvalorwightbathegiddymeleemerchnudgepayersergetemptwhiffchicoflakeioniclorrymoverrowdysassywieldbriskdeferflaskfluffgivergnomelymphpalsypolkarepelskierswoopwhoop';
+const MAP_PLACES_ = 'Abidjan, Côte d\'Ivoire|5.35|-4.0;Abu Dhabi, UAE|24.45|54.4;Abuja, Nigeria|9.06|7.5;Accra, Ghana|5.56|-0.2;Addis Ababa, Ethiopia|9.02|38.75;Adelaide, Australia|-34.93|138.6;Agra (Taj Mahal), India|27.18|78.04;Ahmedabad, India|23.03|72.59;Albuquerque, NM|35.08|-106.65;Alexandria, Egypt|31.2|29.92;Algiers, Algeria|36.73|3.09;Amarillo, TX|35.22|-101.83;Amman, Jordan|31.96|35.95;Amsterdam, Netherlands|52.37|4.89;Anchorage, AK|61.22|-149.9;Ankara, Turkey|39.92|32.85;Antananarivo, Madagascar|-18.91|47.54;Ashgabat, Turkmenistan|37.95|58.38;Asmara, Eritrea|15.34|38.93;Aspen, CO|39.19|-106.82;Asunción, Paraguay|-25.26|-57.58;Athens, Greece|37.98|23.73;Atlanta, GA|33.75|-84.39;Auckland, New Zealand|-36.85|174.76;Austin, TX|30.27|-97.74;Baghdad, Iraq|33.34|44.4;Baku, Azerbaijan|40.38|49.89;Bamako, Mali|12.61|-7.98;Bangkok, Thailand|13.75|100.5;Bangui, Central African Republic|4.36|18.55;Barcelona, Spain|41.39|2.16;Barranquilla, Colombia|10.97|-74.78;Beijing, China|39.91|116.4;Beirut, Lebanon|33.89|35.5;Belgrade, Serbia|44.8|20.47;Belize City, Belize|17.5|-88.2;Belo Horizonte, Brazil|-19.92|-43.94;Belém, Brazil|-1.46|-48.5;Bengaluru, India|12.97|77.59;Berlin, Germany|52.52|13.41;Bern, Switzerland|46.95|7.45;Birmingham, UK|52.48|-1.9;Bishkek, Kyrgyzstan|42.87|74.59;Bogotá, Colombia|4.61|-74.08;Boise, ID|43.61|-116.2;Bora Bora, French Polynesia|-16.5|-151.74;Boston, MA|42.36|-71.06;Brasília, Brazil|-15.78|-47.93;Bratislava, Slovakia|48.15|17.11;Brazzaville, Congo|-4.27|15.28;Brisbane, Australia|-27.47|153.03;Brussels, Belgium|50.85|4.35;Bucharest, Romania|44.43|26.11;Budapest, Hungary|47.5|19.04;Buenos Aires, Argentina|-34.61|-58.38;Cairns, Australia|-16.92|145.77;Cairo, Egypt|30.06|31.25;Calgary, Canada|51.05|-114.09;Cali, Colombia|3.43|-76.52;Campo Grande, Brazil|-20.44|-54.65;Canberra, Australia|-35.28|149.13;Cancún, Mexico|21.16|-86.85;Cape Town, South Africa|-33.93|18.42;Caracas, Venezuela|10.49|-66.88;Cartagena, Colombia|10.39|-75.51;Changchun, China|43.88|125.32;Charleston, SC|32.78|-79.93;Charlotte, NC|35.23|-80.84;Chengdu, China|30.67|104.07;Chennai, India|13.09|80.28;Chicago, IL|41.85|-87.65;Chihuahua, Mexico|28.64|-106.09;Chongqing, China|29.56|106.56;Ciudad Juárez, Mexico|31.72|-106.46;Cologne, Germany|50.93|6.95;Colombo, Sri Lanka|6.94|79.85;Colorado Springs, CO|38.83|-104.82;Columbus, OH|39.96|-83.0;Conakry, Guinea|9.54|-13.68;Copenhagen, Denmark|55.68|12.57;Corpus Christi, TX|27.8|-97.4;Curitiba, Brazil|-25.43|-49.27;Cusco, Peru|-13.53|-71.97;Dakar, Senegal|14.69|-17.44;Dalian, China|38.91|121.6;Dallas, TX|32.78|-96.81;Damascus, Syria|33.51|36.29;Dar es Salaam, Tanzania|-6.82|39.27;Delhi, India|28.65|77.23;Denpasar (Bali), Indonesia|-8.65|115.22;Denver, CO|39.74|-104.98;Detroit, MI|42.33|-83.05;Dhaka, Bangladesh|23.71|90.41;Dodoma, Tanzania|-6.17|35.74;Doha, Qatar|25.29|51.53;Dubai, UAE|25.2|55.27;Dublin, Ireland|53.33|-6.25;Dubrovnik, Croatia|42.65|18.09;Dushanbe, Tajikistan|38.54|68.78;Edinburgh, UK|55.95|-3.19;Edmonton, Canada|53.55|-113.47;El Paso, TX|31.76|-106.49;Fiji (Suva)|-18.14|178.44;Florence, Italy|43.77|11.25;Fort Worth, TX|32.73|-97.32;Fortaleza, Brazil|-3.72|-38.54;Freetown, Sierra Leone|8.49|-13.24;Fukuoka, Japan|33.6|130.42;Galveston, TX|29.3|-94.8;Geneva, Switzerland|46.2|6.15;Gitega, Burundi|-3.43|29.92;Giza (Pyramids), Egypt|29.98|31.13;Goiânia, Brazil|-16.68|-49.25;Grand Canyon Village, AZ|36.05|-112.14;Guadalajara, Mexico|20.68|-103.35;Guangzhou, China|23.12|113.25;Guatemala City, Guatemala|14.64|-90.51;Hamburg, Germany|53.55|9.99;Hangzhou, China|30.29|120.16;Hanoi, Vietnam|21.02|105.84;Harare, Zimbabwe|-17.83|31.05;Harbin, China|45.75|126.65;Havana, Cuba|23.13|-82.38;Hefei, China|31.86|117.28;Helsinki, Finland|60.17|24.94;Hiroshima, Japan|34.4|132.45;Ho Chi Minh City, Vietnam|10.82|106.63;Hong Kong|22.28|114.17;Honolulu, HI|21.31|-157.86;Houston, TX|29.76|-95.36;Hyderabad, India|17.38|78.46;Indianapolis, IN|39.77|-86.16;Islamabad, Pakistan|33.72|73.04;Istanbul, Turkey|41.01|28.98;Jacksonville, FL|30.33|-81.66;Jakarta, Indonesia|-6.21|106.85;Jeddah, Saudi Arabia|21.49|39.19;Johannesburg, South Africa|-26.2|28.04;Juba, South Sudan|4.85|31.58;Juneau, AK|58.3|-134.42;Kabul, Afghanistan|34.53|69.17;Kampala, Uganda|0.32|32.58;Kano, Nigeria|12.0|8.52;Kansas City, MO|39.1|-94.58;Karachi, Pakistan|24.86|67.01;Kathmandu, Nepal|27.7|85.32;Key West, FL|24.56|-81.78;Khartoum, Sudan|15.55|32.53;Kigali, Rwanda|-1.95|30.06;Kingston, Jamaica|17.97|-76.79;Kinshasa, DR Congo|-4.33|15.31;Kobe, Japan|34.69|135.18;Kolkata, India|22.56|88.36;Kraków, Poland|50.06|19.94;Kuala Lumpur, Malaysia|3.14|101.69;Kuwait City, Kuwait|29.37|47.97;Kyiv, Ukraine|50.45|30.52;Kyoto, Japan|35.02|135.75;La Paz, Bolivia|-16.5|-68.15;Lagos, Nigeria|6.45|3.39;Lahore, Pakistan|31.56|74.35;Las Vegas, NV|36.17|-115.14;León, Mexico|21.12|-101.68;Lilongwe, Malawi|-13.97|33.79;Lima, Peru|-12.04|-77.03;Lisbon, Portugal|38.73|-9.15;London, UK|51.51|-0.13;Los Angeles, CA|34.05|-118.24;Louisville, KY|38.25|-85.76;Luanda, Angola|-8.84|13.23;Lubbock, TX|33.58|-101.86;Lusaka, Zambia|-15.41|28.29;Maceió, Brazil|-9.67|-35.74;Machu Picchu, Peru|-13.16|-72.55;Madrid, Spain|40.42|-3.7;Managua, Nicaragua|12.13|-86.25;Manaus, Brazil|-3.1|-60.02;Manila, Philippines|14.6|120.98;Maputo, Mozambique|-25.97|32.58;Marrakesh, Morocco|31.63|-8.01;Marseille, France|43.3|5.37;Medellín, Colombia|6.25|-75.57;Melbourne, Australia|-37.81|144.96;Memphis, TN|35.15|-90.05;Mexicali, Mexico|32.63|-115.45;Mexico City, Mexico|19.43|-99.13;Miami, FL|25.77|-80.19;Milan, Italy|45.46|9.19;Minneapolis, MN|44.98|-93.26;Minsk, Belarus|53.9|27.57;Mogadishu, Somalia|2.04|45.34;Monrovia, Liberia|6.3|-10.8;Monterrey, Mexico|25.68|-100.32;Montevideo, Uruguay|-34.9|-56.19;Montréal, Canada|45.51|-73.59;Moscow, Russia|55.75|37.62;Mount Rushmore, SD|43.88|-103.46;Mumbai, India|19.07|72.88;Munich, Germany|48.14|11.58;Muscat, Oman|23.58|58.41;Mérida, Mexico|20.97|-89.62;N\'Djamena, Chad|12.11|15.04;Nagoya, Japan|35.18|136.91;Nairobi, Kenya|-1.28|36.82;Nanjing, China|32.06|118.78;Naples, Italy|40.85|14.27;Nashville, TN|36.17|-86.78;Naypyidaw, Myanmar|19.75|96.13;New Delhi, India|28.62|77.21;New Orleans, LA|29.95|-90.08;New York City, NY|40.71|-74.01;Niagara Falls, NY|43.09|-79.07;Niamey, Niger|13.51|2.11;Nouakchott, Mauritania|18.09|-15.98;Nuuk, Greenland|64.18|-51.72;Oklahoma City, OK|35.47|-97.52;Orlando, FL|28.54|-81.38;Osaka, Japan|34.69|135.5;Oslo, Norway|59.91|10.75;Ottawa, Canada|45.41|-75.7;Ouagadougou, Burkina Faso|12.37|-1.53;Panama City, Panama|8.99|-79.52;Paris, France|48.85|2.35;Perth, Australia|-31.95|115.86;Peshawar, Pakistan|34.01|71.58;Petra, Jordan|30.33|35.44;Philadelphia, PA|39.95|-75.16;Phnom Penh, Cambodia|11.56|104.92;Phoenix, AZ|33.45|-112.07;Pittsburgh, PA|40.44|-80.0;Port Moresby, Papua New Guinea|-9.48|147.15;Port-au-Prince, Haiti|18.54|-72.34;Portland, OR|45.52|-122.68;Porto Alegre, Brazil|-30.03|-51.23;Porto, Portugal|41.15|-8.61;Porto-Novo, Benin|6.5|2.6;Prague, Czechia|50.09|14.42;Pretoria, South Africa|-25.74|28.19;Puebla, Mexico|19.05|-98.21;Pyongyang, North Korea|39.03|125.75;Qingdao, China|36.06|120.38;Queenstown, New Zealand|-45.03|168.66;Querétaro, Mexico|20.59|-100.39;Quito, Ecuador|-0.23|-78.52;Québec City, Canada|46.81|-71.21;Rabat, Morocco|34.01|-6.83;Recife, Brazil|-8.05|-34.88;Reykjavík, Iceland|64.15|-21.94;Rio de Janeiro, Brazil|-22.91|-43.18;Riyadh, Saudi Arabia|24.69|46.72;Rome, Italy|41.89|12.51;Saint Petersburg, Russia|59.94|30.31;Salt Lake City, UT|40.76|-111.89;Salvador, Brazil|-12.98|-38.49;San Antonio, TX|29.42|-98.49;San Diego, CA|32.72|-117.16;San Francisco, CA|37.77|-122.42;San Jose, CA|37.34|-121.89;San José, Costa Rica|9.93|-84.08;San Juan, Puerto Rico|18.47|-66.11;San Salvador, El Salvador|13.69|-89.19;Sanaa, Yemen|15.35|44.21;Santa Fe, NM|35.69|-105.94;Santiago, Chile|-33.46|-70.65;Santo Domingo, Dominican Republic|18.47|-69.89;Santorini, Greece|36.42|25.43;Sapporo, Japan|43.07|141.35;Savannah, GA|32.08|-81.09;Seattle, WA|47.61|-122.33;Sendai, Japan|38.27|140.87;Seoul, South Korea|37.57|126.98;Seville, Spain|37.39|-5.98;Shanghai, China|31.22|121.46;Shenyang, China|41.79|123.43;Shenzhen, China|22.55|114.07;Singapore|1.29|103.85;Sofia, Bulgaria|42.7|23.32;St. Louis, MO|38.63|-90.2;Stockholm, Sweden|59.33|18.07;Sucre, Bolivia|-19.03|-65.26;Surat, India|21.2|72.83;Suzhou, China|31.3|120.6;Sydney, Australia|-33.87|151.21;São Luís, Brazil|-2.53|-44.3;São Paulo, Brazil|-23.55|-46.64;Taipei, Taiwan|25.05|121.53;Tashkent, Uzbekistan|41.26|69.22;Tegucigalpa, Honduras|14.08|-87.21;Tehran, Iran|35.69|51.42;Tianjin, China|39.14|117.18;Tijuana, Mexico|32.5|-117.0;Tokyo, Japan|35.69|139.69;Toronto, Canada|43.71|-79.4;Tripoli, Libya|32.89|13.19;Tromsø, Norway|69.65|18.96;Tunis, Tunisia|36.82|10.17;Ushuaia, Argentina|-54.8|-68.3;Vancouver, Canada|49.28|-123.12;Venice, Italy|45.44|12.33;Vienna, Austria|48.21|16.37;Vientiane, Laos|17.97|102.6;Warsaw, Poland|52.23|21.01;Washington, D.C.|38.9|-77.04;Wellington, New Zealand|-41.29|174.78;Wuhan, China|30.58|114.27;Xi\'an, China|34.26|108.93;Xiamen, China|24.48|118.08;Yamoussoukro, Côte d\'Ivoire|6.82|-5.28;Yellowstone (Old Faithful), WY|44.46|-110.83;Yokohama, Japan|35.43|139.65;Zurich, Switzerland|47.37|8.54';
 function gameSalt_() {
   const pr = PropertiesService.getScriptProperties(); let s = pr.getProperty('GAME_SALT');
   if (!s) { s = Utilities.getUuid(); pr.setProperty('GAME_SALT', s); }
   return s;
 }
-function gameOrder_() {
-  if (MEMO_.gameOrder) return MEMO_.gameOrder;
-  const n = GAME_WORDS_.length / 5, idx = []; for (let i = 0; i < n; i++) idx.push(i);
-  let h = Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, gameSalt_()).slice(0, 4).reduce((a, b) => (a * 256 + ((b + 256) % 256)) >>> 0, 0) || 1;
-  const rnd = () => { h ^= h << 13; h >>>= 0; h ^= h >>> 17; h ^= h << 5; h >>>= 0; return h / 4294967296; };   // xorshift32
+/** A repeatable random number source from a text seed (xorshift32). */
+function gameRng_(seed) {
+  let h = Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, String(seed)).slice(0, 4).reduce((a, b) => (a * 256 + ((b + 256) % 256)) >>> 0, 0) || 1;
+  return () => { h ^= h << 13; h >>>= 0; h ^= h >>> 17; h ^= h << 5; h >>>= 0; return h / 4294967296; };
+}
+function gameShuffle_(n, seed) {
+  const idx = []; for (let i = 0; i < n; i++) idx.push(i);
+  const rnd = gameRng_(seed);
   for (let i = n - 1; i > 0; i--) { const j = Math.floor(rnd() * (i + 1)); const t = idx[i]; idx[i] = idx[j]; idx[j] = t; }
-  return (MEMO_.gameOrder = idx);
+  return idx;
 }
 function gameNo_(ymd) { return daysBetween_(GAME_START_, ymd) + 1; }
-function gameWord_(ymd) { const o = gameOrder_(), n = o.length, k = ((gameNo_(ymd) - 1) % n + n) % n; return GAME_WORDS_.substr(o[k] * 5, 5); }
+function gameWeekOf_(ymd) { return addDays_(ymd, -((dow_(ymd) + 6) % 7)); }   // the Monday
+const gameKey_ = no => 7 + (no % 11);
+const gameHide_ = (text, key) => Utilities.base64Encode(Utilities.newBlob(String(text)).getBytes().map((b, i) => (((b + 256) % 256) ^ ((key + i) % 256)) - (((((b + 256) % 256) ^ ((key + i) % 256)) > 127) ? 256 : 0)));
+
+/* ---------- Daily Word ---------- */
+function gameWord_(ymd) {
+  if (!MEMO_.gameOrder) MEMO_.gameOrder = gameShuffle_(GAME_WORDS_.length / 5, gameSalt_());
+  const o = MEMO_.gameOrder, n = o.length, k = ((gameNo_(ymd) - 1) % n + n) % n;
+  return GAME_WORDS_.substr(o[k] * 5, 5);
+}
 /** 'g' right spot, 'y' in the word, 'b' not in it (repeated letters count only as often as the answer has them). */
 function gameMarks_(guess, ans) {
   const out = ['b', 'b', 'b', 'b', 'b'], left = {};
@@ -1177,90 +1200,194 @@ function gameMarks_(guess, ans) {
   for (let i = 0; i < 5; i++) if (out[i] !== 'g' && left[guess[i]]) { out[i] = 'y'; left[guess[i]]--; }
   return out.join('');
 }
-function gameWeekOf_(ymd) { return addDays_(ymd, -((dow_(ymd) + 6) % 7)); }   // the Monday
-function gamePoints_(r) { return r.result === 'Solved' ? 7 - r.guesses.length : 0; }
 function gameRows_(ss, tz) {
   return rows_(ss, 'Game').filter(r => r[0] && r[1]).map(r => ({ day: ymd_(r[0], tz), who: String(r[1]), guesses: String(r[2] || '').split(',').filter(Boolean),
     result: /^(Solved|Missed)$/.test(String(r[3])) ? String(r[3]) : '' })).filter(r => r.day);
 }
+const wordPts_ = r => r.result === 'Solved' ? 7 - r.guesses.length : 0;
 const gameGrid_ = (g, ans) => g.map(x => gameMarks_(x, ans).replace(/g/g, '🟩').replace(/y/g, '🟨').replace(/b/g, '⬜')).join('\n');
-/** Standings for one Monday–Sunday week. */
-function gameWeek_(rows, from) {
-  const to = addDays_(from, 6), by = {};
-  rows.filter(r => r.result && r.day >= from && r.day <= to).forEach(r => {
-    const s = by[r.who] = by[r.who] || { who: r.who, pts: 0, played: 0, solved: 0, tries: 0, days: {} };
-    s.played++; s.pts += gamePoints_(r); if (r.result === 'Solved') { s.solved++; s.tries += r.guesses.length; }
-    s.days[daysBetween_(from, r.day)] = r.result === 'Solved' ? r.guesses.length : 'x';
-  });
-  const list = Object.keys(by).map(k => by[k]).sort((a, b) => b.pts - a.pts || (a.solved ? a.tries / a.solved : 9) - (b.solved ? b.tries / b.solved : 9) || a.who.localeCompare(b.who));
-  return { from, to, rows: list.map(s => Object.assign(s, { avg: s.solved ? Math.round(s.tries / s.solved * 10) / 10 : null })) };
+
+/* ---------- Family Map ---------- */
+function mapBuiltIn_() { return MAP_PLACES_.split(';').map(s => { const [n, la, lo] = s.split('|'); return { n, la: Number(la), lo: Number(lo) }; }); }
+/** km between two points. */
+function mapKm_(a, b) {
+  const R = 6371, rad = x => x * Math.PI / 180, dLa = rad(b[0] - a[0]), dLo = rad(b[1] - a[1]);
+  const h = Math.sin(dLa / 2) ** 2 + Math.cos(rad(a[0])) * Math.cos(rad(b[0])) * Math.sin(dLo / 2) ** 2;
+  return 2 * R * Math.asin(Math.min(1, Math.sqrt(h)));
+}
+function mapPts_(km) { return km <= 20 ? 100 : Math.max(0, Math.round(100 * Math.exp(-(km - 20) / 1500))); }
+/** The Map places tab. Rows typed in the sheet without coordinates are looked up once (Google Maps) and filled in. */
+function mapPlaces_(ss, tz) {
+  const sh = ss.getSheetByName('Map places'); if (!sh) return [];
+  let rows = rows_(ss, 'Map places');
+  const missing = rows.map((r, i) => (String(r[0]).trim() && (r[2] === '' || r[3] === '') && !/^not found/i.test(String(r[2]))) ? i : -1).filter(i => i >= 0).slice(0, 10);
+  if (missing.length) {
+    const lock = LockService.getScriptLock();
+    if (lock.tryLock(3000)) { try { missing.forEach(i => { const g = mapLookup_(String(rows[i][0])); sh.getRange(i + 2, 3, 1, 2).setValues([g ? [g.la, g.lo] : ['not found – add the country, or type the coordinates', '']]); }); SpreadsheetApp.flush(); } finally { lock.releaseLock(); }
+      memoReset_(MEMO_ON_); rows = rows_(ss, 'Map places'); }
+  }
+  return rows.map((r, i) => ({ row: i + 2, place: String(r[0]).trim(), label: String(r[1] || '').trim(), la: num_(r[2]), lo: num_(r[3]), on: ymd_(r[4], tz), by: String(r[5] || '') }))
+    .filter(p => p.place);
+}
+function mapLookup_(q) {
+  try {
+    const res = Maps.newGeocoder().geocode(q), r = res && res.status === 'OK' && res.results[0];
+    return r ? { la: Math.round(r.geometry.location.lat * 1e4) / 1e4, lo: Math.round(r.geometry.location.lng * 1e4) / 1e4, name: r.formatted_address } : null;
+  } catch (e) { return null; }
+}
+/** Today's five places. Worked out once a day and kept, so editing the list never changes a game someone has started. */
+function mapDay_(ss, tz, ymd) {
+  const pr = PropertiesService.getScriptProperties(), k = 'MAP_DAY';
+  try { const kept = JSON.parse(pr.getProperty(k) || 'null'); if (kept && kept.day === ymd) return kept.places; } catch (e) {}
+  const fam = mapPlaces_(ss, tz).filter(p => p.la !== null && p.lo !== null && Math.abs(p.la) <= 90 && Math.abs(p.lo) <= 180).map(p => ({ n: p.label || p.place, la: p.la, lo: p.lo, on: p.on, f: 1 }));
+  const want = Math.max(0, Math.min(5, Number(setting_(ss, 'Family places per day') || 2) || 0));
+  const salt = gameSalt_(), no = gameNo_(ymd), picked = [];
+  fam.filter(p => p.on === ymd).slice(0, 5).forEach(p => picked.push(p));          // dated for today: always in
+  const pool = fam.filter(p => !p.on);
+  if (pool.length && picked.length < want) {
+    const order = gameShuffle_(pool.length, salt + 'fam' + pool.length), per = Math.min(want - picked.length, pool.length);
+    for (let j = 0; j < per; j++) picked.push(pool[order[(no * per + j) % pool.length]]);
+  }
+  const built = mapBuiltIn_(), rnd = gameRng_(salt + 'map' + ymd), used = {}; picked.forEach(p => { used[p.n] = 1; });
+  while (picked.length < 5) { const p = built[Math.floor(rnd() * built.length)]; if (!used[p.n]) { used[p.n] = 1; picked.push(p); } }
+  const mix = gameShuffle_(5, salt + 'mix' + ymd), places = mix.map(i => ({ n: picked[i].n, la: picked[i].la, lo: picked[i].lo, f: picked[i].f ? 1 : 0 }));
+  pr.setProperty(k, JSON.stringify({ day: ymd, places }));
+  return places;
+}
+function mapRows_(ss, tz) {
+  return rows_(ss, 'Map plays').filter(r => r[0] && r[1]).map(r => {
+    const g = String(r[2] || '').split(';').filter(Boolean).map(x => x.split(',').map(Number)), s = String(r[3] || '').split(',').filter(x => x !== '').map(Number);
+    return { day: ymd_(r[0], tz), who: String(r[1]), guesses: g, scores: s, total: s.reduce((a, b) => a + b, 0), done: s.length >= 5 };
+  }).filter(r => r.day);
+}
+const mapPts5_ = r => Math.round(r.total / 100);                     // leaderboard points for a finished map (0–5)
+const mapEmoji_ = s => s >= 90 ? '🎯' : s >= 60 ? '🟢' : s >= 30 ? '🟡' : s > 0 ? '🟠' : '🔴';
+
+/* ---------- Leaderboards ---------- */
+/** Standings for one Monday–Sunday week, both games together. days[j] = { w: guesses | 'x', m: map points }. */
+function gameWeek_(words, maps, from) {
+  const to = addDays_(from, 6), by = {}, get = who => by[who] = by[who] || { who, pts: 0, word: 0, map: 0, words: 0, solved: 0, maps: 0, mapTotal: 0, days: {} };
+  words.filter(r => r.result && r.day >= from && r.day <= to).forEach(r => { const s = get(r.who), j = daysBetween_(from, r.day), p = wordPts_(r);
+    s.word += p; s.pts += p; s.words++; if (r.result === 'Solved') s.solved++; (s.days[j] = s.days[j] || {}).w = r.result === 'Solved' ? r.guesses.length : 'x'; });
+  maps.filter(r => r.done && r.day >= from && r.day <= to).forEach(r => { const s = get(r.who), j = daysBetween_(from, r.day), p = mapPts5_(r);
+    s.map += p; s.pts += p; s.maps++; s.mapTotal += r.total; (s.days[j] = s.days[j] || {}).m = r.total; });
+  const rows = Object.keys(by).map(k => by[k]).sort((a, b) => b.pts - a.pts || b.mapTotal - a.mapTotal || b.solved - a.solved || a.who.localeCompare(b.who));
+  return { from, to, rows };
 }
 function gameChamps_(wk) { const top = wk.rows.length ? wk.rows[0].pts : 0; return top > 0 ? wk.rows.filter(r => r.pts === top).map(r => r.who) : []; }
 
 function game_(ss, tz, today, me) {
   gameWeeklyCatchUp_(ss, tz, today);
-  const rows = gameRows_(ss, tz), ans = gameWord_(today), no = gameNo_(today);
-  const mineRow = rows.find(r => r.day === today && r.who === me.name), mine = mineRow ? { g: mineRow.guesses, r: mineRow.result } : { g: [], r: '' };
-  const done = !!mine.r;
-  const todayList = rows.filter(r => r.day === today && r.who !== me.name && (r.result || r.guesses.length))
-    .map(r => ({ who: r.who, n: r.guesses.length, r: r.result, marks: done && r.result ? r.guesses.map(g => gameMarks_(g, ans)) : [] }));
-  const week = gameWeek_(rows, gameWeekOf_(today));
-  // all-time: weekly titles, played, solved, streaks, guess spread
+  const words = gameRows_(ss, tz), maps = ss.getSheetByName('Map plays') ? mapRows_(ss, tz) : [], no = gameNo_(today), key = gameKey_(no);
+  // Daily Word
+  const ans = gameWord_(today), wr = words.find(r => r.day === today && r.who === me.name), wMine = wr ? { g: wr.guesses, r: wr.result } : { g: [], r: '' }, wDone = !!wMine.r;
+  const word = { done: wDone, w: wDone ? ans : gameHide_(ans, key), mine: wMine,
+    today: words.filter(r => r.day === today && r.who !== me.name && (r.result || r.guesses.length)).map(r => ({ who: r.who, n: r.guesses.length, r: r.result, marks: wDone && r.result ? r.guesses.map(g => gameMarks_(g, ans)) : [] })) };
+  // Family Map
+  let map = null;
+  if (ss.getSheetByName('Map plays')) {
+    const places = mapDay_(ss, tz, today), mr = maps.find(r => r.day === today && r.who === me.name), mMine = mr ? { g: mr.guesses, s: mr.scores } : { g: [], s: [] }, mDone = mMine.s.length >= 5;
+    map = { done: mDone, p: mDone ? places : gameHide_(JSON.stringify(places), key), mine: mMine,
+      today: maps.filter(r => r.day === today && r.who !== me.name && r.scores.length).map(r => ({ who: r.who, n: r.scores.length, total: r.total, done: r.done, s: mDone && r.done ? r.scores : [] })) };
+    if (me.role === 'Organizer') { map.places = mapPlaces_(ss, tz).map(p => ({ row: p.row, place: p.place, label: p.label, ok: p.la !== null && p.lo !== null, on: p.on, by: p.by })); map.perDay = Math.max(0, Math.min(5, Number(setting_(ss, 'Family places per day') || 2) || 0)); }
+  }
+  const week = gameWeek_(words, maps, gameWeekOf_(today));
+  // all-time
   const titles = {}, weeks = rows_(ss, 'Game weeks').filter(r => r[0] && r[1]);
   weeks.forEach(r => splitList_(String(r[1]).replace(/ & /g, ',')).forEach(n => { titles[n] = (titles[n] || 0) + 1; }));
-  const ppl = {}; rows.filter(r => r.result).forEach(r => { (ppl[r.who] = ppl[r.who] || []).push(r); });
+  const ppl = {}; words.filter(r => r.result).forEach(r => { (ppl[r.who] = ppl[r.who] || { w: [], m: [] }).w.push(r); });
+  maps.filter(r => r.done).forEach(r => { (ppl[r.who] = ppl[r.who] || { w: [], m: [] }).m.push(r); });
   const all = Object.keys(ppl).map(who => {
-    const rs = ppl[who].sort((a, b) => a.day.localeCompare(b.day)), solvedDays = {}, spread = [0, 0, 0, 0, 0, 0];
-    rs.forEach(r => { if (r.result === 'Solved') { solvedDays[r.day] = 1; spread[r.guesses.length - 1]++; } });
+    const rs = ppl[who].w.sort((a, b) => a.day.localeCompare(b.day)), solvedDays = {};
+    rs.forEach(r => { if (r.result === 'Solved') solvedDays[r.day] = 1; });
     let best = 0, run = 0, prev = '';
     rs.forEach(r => { if (r.result !== 'Solved') { run = 0; prev = r.day; return; } run = prev && daysBetween_(prev, r.day) === 1 && run ? run + 1 : 1; prev = r.day; best = Math.max(best, run); });
     let cur = 0, d = solvedDays[today] ? today : addDays_(today, -1); while (solvedDays[d]) { cur++; d = addDays_(d, -1); }
-    const solved = rs.filter(r => r.result === 'Solved').length;
-    return { who, titles: titles[who] || 0, played: rs.length, solved, streak: cur, best, spread };
-  }).sort((a, b) => b.titles - a.titles || b.solved - a.solved || a.who.localeCompare(b.who));
+    const ms = ppl[who].m;
+    return { who, titles: titles[who] || 0, words: rs.length, solved: rs.filter(r => r.result === 'Solved').length, streak: cur, best,
+      maps: ms.length, mapAvg: ms.length ? Math.round(ms.reduce((a, r) => a + r.total, 0) / ms.length) : 0, mapBest: ms.reduce((a, r) => Math.max(a, r.total), 0) };
+  }).sort((a, b) => b.titles - a.titles || (b.solved + b.maps) - (a.solved + a.maps) || a.who.localeCompare(b.who));
   const lw = weeks[weeks.length - 1];
   const last = lw ? { from: ymd_(lw[0], tz), champs: splitList_(String(lw[1]).replace(/ & /g, ',')), pts: Number(lw[2]) || 0 } : null;
-  const key = 7 + (no % 11);
-  return { name: GAME_NAME_, day: today, no, done,
-    w: done ? ans : Utilities.base64Encode(ans.split('').map((c, i) => String.fromCharCode(c.charCodeAt(0) ^ (key + i))).join('')), k: key,
-    mine, today: todayList, week, last: last && last.from !== week.from ? last : null, all };
+  return { day: today, no, k: key, word, map, week, last: last && last.from !== week.from ? last : null, all };
 }
 
 function gameAct_(ss, p, me, today, tz) {
+  const A = p.action;
+  if (A === 'gameShare') return gameShare_(ss, me, today, tz, p.game === 'map' ? 'map' : 'word');
+  if (A === 'mapPlaceAdd' || A === 'mapPlaceDel') return mapPlaceAct_(ss, p, me, tz);
+  if (String(p.day) !== today) throw new Error("That was yesterday's game – today's is ready");
+  if (A === 'mapGuess') return mapGuess_(ss, p, me, today, tz);
   const sh = ss.getSheetByName('Game'); if (!sh) throw new Error('The Game tab is missing. Ask the organizer to run Dashboard › 1. Set up.');
-  if (p.action === 'gameShare') return gameShare_(ss, me, today, tz);
-  if (String(p.day) !== today) throw new Error("That was yesterday's word – today's is ready");
   const g = String(p.guess || '').toLowerCase().trim();
   if (!/^[a-z]{5}$/.test(g)) throw new Error('Guesses are five letters');
   const v = sh.getLastRow() > 1 ? sh.getRange(2, 1, sh.getLastRow() - 1, 6).getValues() : [];
-  let i = v.findIndex(r => ymd_(r[0], tz) === today && String(r[1]) === me.name);
+  const i = v.findIndex(r => ymd_(r[0], tz) === today && String(r[1]) === me.name);
   const cur = i >= 0 ? String(v[i][2] || '').split(',').filter(Boolean) : [];
   if (i >= 0 && /^(Solved|Missed)$/.test(String(v[i][3]))) return;           // already finished (a repeat from a slow phone)
   if (cur.length >= 6) return;
   const ans = gameWord_(today), list = cur.concat(g), res = g === ans ? 'Solved' : list.length >= 6 ? 'Missed' : '';
   const row = [today, me.name, list.join(','), res, res === 'Solved' ? 7 - list.length : res ? 0 : '', res ? new Date() : ''];
-  if (i >= 0) sh.getRange(i + 2, 1, 1, 6).setValues([row]); else { sh.appendRow(row); }
+  if (i >= 0) sh.getRange(i + 2, 1, 1, 6).setValues([row]); else sh.appendRow(row);
 }
-/** Posts your result (squares only, no letters) to the Everyone chat, as you. */
-function gameShare_(ss, me, today, tz) {
-  const r = gameRows_(ss, tz).find(x => x.day === today && x.who === me.name);
-  if (!r || !r.result) throw new Error('Finish today\'s word first');
-  const ans = gameWord_(today), wk = gameWeek_(gameRows_(ss, tz), gameWeekOf_(today)), rank = wk.rows.findIndex(x => x.who === me.name) + 1;
-  const text = GAME_NAME_ + ' #' + gameNo_(today) + '  ' + (r.result === 'Solved' ? r.guesses.length : 'X') + '/6\n' + gameGrid_(r.guesses, ans) +
-    (rank ? '\n' + (rank === 1 ? '🥇 ' : '') + 'This week: #' + rank + ' · ' + wk.rows[rank - 1].pts + ' pts' : '');
+function mapGuess_(ss, p, me, today, tz) {
+  const sh = ss.getSheetByName('Map plays'); if (!sh) throw new Error('The Map plays tab is missing. Ask the organizer to run Dashboard › 1. Set up.');
+  const la = Number(p.lat), lo = Number(p.lng), n = Number(p.i);
+  if (!isFinite(la) || !isFinite(lo) || Math.abs(la) > 90 || Math.abs(lo) > 180) throw new Error('That spot is off the map');
+  const v = sh.getLastRow() > 1 ? sh.getRange(2, 1, sh.getLastRow() - 1, 6).getValues() : [];
+  const i = v.findIndex(r => ymd_(r[0], tz) === today && String(r[1]) === me.name);
+  const g = i >= 0 ? String(v[i][2] || '').split(';').filter(Boolean) : [], s = i >= 0 ? String(v[i][3] || '').split(',').filter(x => x !== '') : [];
+  if (s.length >= 5 || n !== s.length) return;                                  // finished, or a repeat
+  const place = mapDay_(ss, tz, today)[n], pts = mapPts_(mapKm_([la, lo], [place.la, place.lo]));
+  g.push((Math.round(la * 1e3) / 1e3) + ',' + (Math.round(lo * 1e3) / 1e3)); s.push(pts);
+  const done = s.length >= 5, total = s.reduce((a, b) => a + Number(b), 0);
+  const row = [today, me.name, g.join(';'), s.join(','), done ? total : '', done ? new Date() : ''];
+  if (i >= 0) sh.getRange(i + 2, 1, 1, 6).setValues([row]); else sh.appendRow(row);
+}
+/** Organizers add (looked up on Google Maps) or remove places for the Family Map. */
+function mapPlaceAct_(ss, p, me, tz) {
+  if (me.role !== 'Organizer') throw new Error('Only organizers can change the map places');
+  const sh = ss.getSheetByName('Map places'); if (!sh) throw new Error('The Map places tab is missing. Ask the organizer to run Dashboard › 1. Set up.');
+  if (p.action === 'mapPlaceDel') {
+    const r = Number(p.row); if (r < 2 || r > sh.getLastRow() || String(sh.getRange(r, 1).getValue()).trim() !== String(p.place || '').trim()) throw new Error('That place was already changed – refresh');
+    sh.deleteRow(r); return;
+  }
+  const q = clean_(p.place, 200), label = clean_(p.label || '', 120), on = /^\d{4}-\d{2}-\d{2}$/.test(String(p.on || '')) ? String(p.on) : '';
+  if (!q) throw new Error('Type a place');
+  let g = null; const m = q.match(/^\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*$/);   // coordinates typed in
+  if (m && Math.abs(+m[1]) <= 90 && Math.abs(+m[2]) <= 180) g = { la: +m[1], lo: +m[2] };
+  else g = mapLookup_(q);
+  if (!g) throw new Error('Couldn\'t find "' + q + '" on the map – try adding the state or country');
+  if (sh.getLastColumn() < TABS['Map places'].length) buildTab_(ss, 'Map places');
+  sh.appendRow([q, label, g.la, g.lo, on, me.name]);
+}
+/** Posts your result (squares/scores only, no answers) to the Everyone chat, as you. */
+function gameShare_(ss, me, today, tz, which) {
+  const words = gameRows_(ss, tz), maps = ss.getSheetByName('Map plays') ? mapRows_(ss, tz) : [], no = gameNo_(today);
+  let text;
+  if (which === 'map') {
+    const r = maps.find(x => x.day === today && x.who === me.name); if (!r || !r.done) throw new Error('Finish today\'s map first');
+    text = 'Family Map #' + no + '  ' + r.total + '/500\n' + r.scores.map(mapEmoji_).join('');
+  } else {
+    const r = words.find(x => x.day === today && x.who === me.name); if (!r || !r.result) throw new Error('Finish today\'s word first');
+    text = 'Daily Word #' + no + '  ' + (r.result === 'Solved' ? r.guesses.length : 'X') + '/6\n' + gameGrid_(r.guesses, gameWord_(today));
+  }
+  const wk = gameWeek_(words, maps, gameWeekOf_(today)), rank = wk.rows.findIndex(x => x.who === me.name) + 1;
+  if (rank) text += '\n' + (rank === 1 ? '🥇 ' : '') + 'This week: #' + rank + ' · ' + wk.rows[rank - 1].pts + ' pts';
   gamePost_(ss, text, me);
 }
 /** A message into the Everyone channel: live chat if it's set up, otherwise the Messages tab. from = a person (shares) or nothing (the weekly update). */
 function gamePost_(ss, text, from) {
   if (!config_(ss).features['Messages']) return false;
+  const name = from && from.id ? from.name : '🎮 Family Games', uid = from && from.id || 'games';
   if (chatLive_(ss)) {
     chatSyncRoster_(ss);
-    const r = chatPost_(ss, 'system', from && from.id ? { ch: 'general', uid: from.id, name: from.name, text } : { ch: 'general', uid: 'game', name: '🎯 ' + GAME_NAME_, text });
-    if (r && r.ok === false) chatPost_(ss, 'system', { match: '^everyone$', uid: from && from.id || 'game', name: from && from.id ? from.name : '🎯 ' + GAME_NAME_, text });
+    const r = chatPost_(ss, 'system', { ch: 'general', uid, name, text });
+    if (r && r.ok === false) chatPost_(ss, 'system', { match: '^everyone$', uid, name, text });
   } else {
     const sh = ss.getSheetByName('Messages'); if (!sh) return false;
     const ch = (rows_(ss, 'Channels').find(r => String(r[0]) === 'general') || rows_(ss, 'Channels').find(r => /^everyone$/i.test(String(r[1]))) || [])[0]; if (!ch) return false;
-    sh.appendRow(['m' + Utilities.getUuid().replace(/-/g, '').slice(0, 11), String(ch), from && from.id || 'game', from && from.id ? from.name : '🎯 ' + GAME_NAME_, new Date(), clean_(text, 2000, true), '', '', '']);
+    sh.appendRow(['m' + Utilities.getUuid().replace(/-/g, '').slice(0, 11), String(ch), uid, name, new Date(), clean_(text, 2000, true), '', '', '']);
   }
   return true;
 }
@@ -1269,41 +1396,45 @@ function gamePost_(ss, text, from) {
 function gameWeekly() {
   memoReset_(false);
   const ss = SpreadsheetApp.getActive(), tz = ss.getSpreadsheetTimeZone(), today = Utilities.formatDate(new Date(), tz, 'yyyy-MM-dd');
-  if (!config_(ss).features[GAME_NAME_]) return 'off';
+  if (!config_(ss).features[GAMES_]) return 'off';
   return gameWeeklyPost_(ss, tz, addDays_(gameWeekOf_(today), -7));
 }
 function gameWeeklyCatchUp_(ss, tz, today) {           // nobody's trigger ran yet this week: the first visit posts it
   const from = addDays_(gameWeekOf_(today), -7), c = CacheService.getScriptCache(), k = 'gameWeek_' + from;
   if (c.get(k) || !ss.getSheetByName('Game weeks')) return;
   if (rows_(ss, 'Game weeks').some(r => ymd_(r[0], tz) === from)) { c.put(k, '1', 21600); return; }
-  if (!gameRows_(ss, tz).some(r => r.result && r.day >= from && r.day < gameWeekOf_(today))) { c.put(k, '1', 3600); return; }
+  const mon = gameWeekOf_(today), played = r => r.day >= from && r.day < mon;
+  if (!gameRows_(ss, tz).some(r => r.result && played(r)) && !(ss.getSheetByName('Map plays') && mapRows_(ss, tz).some(r => r.done && played(r)))) { c.put(k, '1', 3600); return; }
   const lock = LockService.getScriptLock(); if (!lock.tryLock(3000)) return;
   try { memoReset_(false); gameWeeklyPost_(ss, tz, from); c.put(k, '1', 21600); } catch (e) {} finally { lock.releaseLock(); memoReset_(true); }
 }
 function gameWeeklyPost_(ss, tz, from) {
   const wsh = ss.getSheetByName('Game weeks'); if (!wsh) return 'no tab';
   if (rows_(ss, 'Game weeks').some(r => ymd_(r[0], tz) === from)) return 'already posted';
-  const rows = gameRows_(ss, tz), wk = gameWeek_(rows, from);
+  const words = gameRows_(ss, tz), maps = ss.getSheetByName('Map plays') ? mapRows_(ss, tz) : [], wk = gameWeek_(words, maps, from);
   if (!wk.rows.length) return 'nobody played';
-  const champs = gameChamps_(wk), medal = ['🥇', '🥈', '🥉'];
+  const champs = gameChamps_(wk), medal = ['🥇', '🥈', '🥉'], inWeek = r => r.day >= from && r.day <= wk.to;
   let rank = 0, prevPts = null;
-  const lines = wk.rows.map((r, i) => { if (r.pts !== prevPts) { rank = i + 1; prevPts = r.pts; } return (medal[rank - 1] || rank + '.') + ' ' + r.who + ' – ' + r.pts + ' pts (' + r.solved + '/' + r.played + ' solved' + (r.avg ? ', avg ' + r.avg : '') + ')'; });
-  const fast = rows.filter(r => r.result === 'Solved' && r.day >= from && r.day <= wk.to).sort((a, b) => a.guesses.length - b.guesses.length)[0];
-  const fastAll = fast ? rows.filter(r => r.result === 'Solved' && r.day >= from && r.day <= wk.to && r.guesses.length === fast.guesses.length) : [];
+  const lines = wk.rows.map((r, i) => { if (r.pts !== prevPts) { rank = i + 1; prevPts = r.pts; } return (medal[rank - 1] || rank + '.') + ' ' + r.who + ' – ' + r.pts + ' pts (Word ' + r.word + ' · Map ' + r.map + ')'; });
+  const fast = words.filter(r => r.result === 'Solved' && inWeek(r)).sort((a, b) => a.guesses.length - b.guesses.length)[0];
+  const fastWho = fast ? words.filter(r => r.result === 'Solved' && inWeek(r) && r.guesses.length === fast.guesses.length).map(r => r.who).filter((x, i, a) => a.indexOf(x) === i).slice(0, 3) : [];
+  const bestMap = maps.filter(r => r.done && inWeek(r)).sort((a, b) => b.total - a.total)[0];
+  const bestWho = bestMap ? maps.filter(r => r.done && inWeek(r) && r.total === bestMap.total).map(r => r.who).filter((x, i, a) => a.indexOf(x) === i).slice(0, 3) : [];
   const wkName = Utilities.formatDate(parseYmd_(from), Session.getScriptTimeZone(), 'MMM d');
-  const text = '🏆 ' + GAME_NAME_ + ' – week of ' + wkName + '\n' +
-    (champs.length ? (champs.length > 1 ? 'Champions: ' + champs.join(' & ') : 'Champion: ' + champs[0]) + ' with ' + wk.rows[0].pts + ' points!' : 'No one solved a word this week.') + '\n\n' +
+  const text = '🏆 Family Games – week of ' + wkName + '\n' +
+    (champs.length ? (champs.length > 1 ? 'Champions: ' + champs.join(' & ') : 'Champion: ' + champs[0]) + ' with ' + wk.rows[0].pts + ' points!' : 'No points scored this week.') + '\n\n' +
     lines.join('\n') +
-    (fast ? '\n\n⚡ Quickest solve: ' + fastAll.map(r => r.who + ' (#' + gameNo_(r.day) + ')').filter((x, i, a) => a.indexOf(x) === i).slice(0, 3).join(', ') + ' in ' + fast.guesses.length + (fast.guesses.length === 1 ? ' guess' : ' guesses') : '') +
+    (fast ? '\n\n⚡ Quickest word: ' + fastWho.join(', ') + ' in ' + fast.guesses.length + (fast.guesses.length === 1 ? ' guess' : ' guesses') : '') +
+    (bestMap ? '\n🌎 Best map: ' + bestWho.join(', ') + ' with ' + bestMap.total + '/500' : '') +
     '\n\nEveryone starts this week at 0. Good luck! 🍀';
   wsh.appendRow([from, champs.join(' & '), champs.length ? wk.rows[0].pts : 0, lines.join('\n'), new Date()]);
   SpreadsheetApp.flush();
-  let posted = false; try { posted = gamePost_(ss, text); } catch (e) { console.warn('Daily Word weekly post: ' + e.message); }
+  let posted = false; try { posted = gamePost_(ss, text); } catch (e) { console.warn('Games weekly post: ' + e.message); }
   try {
     const ppl = rows_(ss, 'People').filter(r => r[0] && r[9] && truthy_(r[7]));
-    push_(ss, ppl.map(r => ({ uid: String(r[9]), kind: 'msg', direct: false, title: '🏆 ' + GAME_NAME_ + ': ' + (champs.length ? champs.join(' & ') + ' won the week' : 'new week'),
-      body: champs.length ? champs.join(' & ') + ' finished on top with ' + wk.rows[0].pts + ' points. Everyone starts this week at 0.' : 'Everyone starts this week at 0.', url: posted ? '?go=chat:general' : '?go=game', tag: 'game-week' })));
-  } catch (e) { console.warn('Daily Word weekly push: ' + e.message); }
+    push_(ss, ppl.map(r => ({ uid: String(r[9]), kind: 'msg', direct: false, title: '🏆 Family Games: ' + (champs.length ? champs.join(' & ') + ' won the week' : 'new week'),
+      body: champs.length ? champs.join(' & ') + ' finished on top with ' + wk.rows[0].pts + ' points. Everyone starts this week at 0.' : 'Everyone starts this week at 0.', url: posted ? '?go=chat:general' : '?go=games', tag: 'games-week' })));
+  } catch (e) { console.warn('Games weekly push: ' + e.message); }
   return 'posted';
 }
 /** Makes (once) the Monday-morning trigger for the weekly update. */
@@ -1312,10 +1443,10 @@ function gameTrigger_() {
     if (ScriptApp.getProjectTriggers().some(t => t.getHandlerFunction() === 'gameWeekly')) return true;
     ScriptApp.newTrigger('gameWeekly').timeBased().onWeekDay(ScriptApp.WeekDay.MONDAY).atHour(8).create();
     return true;
-  } catch (e) { console.warn('Daily Word trigger: ' + e.message); return false; }
+  } catch (e) { console.warn('Games trigger: ' + e.message); return false; }
 }
 /** Menu: post last week's update now (if it hasn't gone out). */
-function gameWeeklyNow() { const r = gameWeekly(); ui_().alert(GAME_NAME_, r === 'posted' ? "Last week's results are in the Everyone chat." : r === 'already posted' ? "Last week's results were already posted." : r === 'nobody played' ? 'Nobody played last week, so there is nothing to post.' : 'Turn on ' + GAME_NAME_ + ' on the Features tab first.', ui_().ButtonSet.OK); }
+function gameWeeklyNow() { const r = gameWeekly(); ui_().alert('Family Games', r === 'posted' ? "Last week's results are in the Everyone chat." : r === 'already posted' ? "Last week's results were already posted." : r === 'nobody played' ? 'Nobody played last week, so there is nothing to post.' : 'Turn on Games on the Features tab first.', ui_().ButtonSet.OK); }
 
 /* ============================================================
    Dashboard calendar: Events tab, outside iCal links, subscription feeds

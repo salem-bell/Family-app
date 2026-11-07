@@ -1,7 +1,7 @@
 // Keeps the app shell on the phone so it opens instantly and works offline.
 // Bump VERSION whenever app files change so phones pick up the new version.
-const VERSION = 'fam-3.5.0';
-const SHELL = ['./', 'index.html', 'app.js', 'config.js', 'manifest.webmanifest', 'icons/icon-192.png', 'icons/icon-512.png', 'icons/apple-touch-icon.png', 'brand/bellah-crest.png'];
+const VERSION = 'fam-3.6.0';
+const SHELL = ['./', 'index.html', 'app.js', 'config.js', 'manifest.webmanifest', 'icons/icon-192.png', 'icons/icon-512.png', 'icons/apple-touch-icon.png', 'brand/bellah-crest.png', 'map.js'];
 
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(VERSION).then(c => c.addAll(SHELL.map(u => new Request(u, { cache: 'reload' })))).then(() => self.skipWaiting()));   // straight from the server, never the browser's cache

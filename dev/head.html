@@ -297,6 +297,26 @@
   .gstat{width:46px;text-align:center;flex:none;font-size:.85em}
   .gdayhead .gstat{font-family:var(--label);font-size:.62em;text-transform:uppercase;letter-spacing:.05em;color:var(--muted)}
   .gmini{display:inline-flex;flex-direction:column;gap:1px;margin-right:6px;vertical-align:middle} .gmini span{display:flex;gap:1px} .gmini i{width:7px;height:7px;border-radius:1px;display:block}
+  .gpick{display:flex;margin-bottom:14px} .gpick button{flex:1 1 0;padding:10px 8px;font-size:.95em;text-align:center}
+  .gfind{padding:12px 14px 8px;text-align:center} .gplace{font-family:var(--head);font-size:1.45em;font-weight:700;line-height:1.2;margin-top:2px}
+  .gmapbox{position:relative;height:min(62vw,430px);min-height:240px;margin:0 10px;border:1px solid var(--line);border-radius:var(--r);overflow:hidden;touch-action:none;user-select:none;-webkit-user-select:none;background:#bfe1ef}
+  .gmapbox svg{width:100%;height:100%;display:block;cursor:crosshair}
+  .gsea{fill:#bfe1ef} .gland{fill:#f6f1e6;stroke:#9fb3b8;stroke-width:calc(var(--u,1) * 0.8px)} .gborder{fill:none;stroke:#c2b296;stroke-width:calc(var(--u,1) * 0.9px)} .gstate{fill:none;stroke:#d8ccb6;stroke-width:calc(var(--u,1) * 0.7px)}
+  .gpin circle{fill:#e2552f;stroke:#fff;stroke-width:2.5} .gans circle{fill:#2e7d32;stroke:#fff;stroke-width:2.5}
+  .gpin text,.gans text{fill:#fff;font:700 10px/1 -apple-system,sans-serif;text-anchor:middle}
+  .gline{stroke:#333}
+  .gzoom{position:absolute;right:8px;top:8px;display:flex;flex-direction:column;gap:6px}
+  .gzoom button{width:36px;height:36px;border-radius:6px;border:1px solid #9fb3b8;background:rgba(255,255,255,.92);color:#1d2b30;font-size:1.25em;line-height:1;cursor:pointer;padding:0}
+  .gmapbar{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 14px}
+  .gmapbar .btn{flex:none} .gmapbar .btn[disabled]{opacity:.45}
+  .gdots{display:flex;gap:6px;justify-content:center;padding:0 14px 12px}
+  .gdot{min-width:30px;height:26px;padding:0 4px;border-radius:13px;display:inline-flex;align-items:center;justify-content:center;font-size:.8em;background:var(--soft);color:var(--muted)}
+  .gdot.on{background:var(--accent);color:var(--onaccent,#fff);font-weight:700} .gdot.cur{outline:1.5px solid var(--accent)}
+  .gemo{letter-spacing:1px;margin-right:6px;white-space:nowrap}
+  .glist{border-top:1px solid var(--soft);margin-top:10px}
+  .dark .gmapbox,.dark .gsea,.skynight .gmapbox,.skynight .gsea,.papernight .gmapbox,.papernight .gsea,.lavendernight .gmapbox,.lavendernight .gsea,.burgundy .gmapbox,.burgundy .gsea{fill:#1d3440;background:#1d3440}
+  .dark .gland,.skynight .gland,.papernight .gland,.lavendernight .gland,.burgundy .gland{fill:#3b4249;stroke:#56616b} .dark .gborder,.skynight .gborder,.papernight .gborder,.lavendernight .gborder,.burgundy .gborder{stroke:#6c757d} .dark .gstate,.skynight .gstate,.papernight .gstate,.lavendernight .gstate,.burgundy .gstate{stroke:#555e66}
+  .dark .gline,.skynight .gline,.papernight .gline,.lavendernight .gline,.burgundy .gline{stroke:#e8e6e3}
 </style>
 </head>
 <body class="paper">
