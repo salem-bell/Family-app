@@ -731,7 +731,16 @@ function applyLook(){
   const lg = $('#logo'), logo = data.logo || crest; if (logo){ if (lg.getAttribute('src') !== logo) lg.src = logo; lg.hidden = false; } else lg.hidden = true;
   $('#tagline').textContent = data.tagline || '';
 }
+/* ----- icon badge: unread messages as a number on the app icon (installed apps; iPhone needs notifications on) ----- */
+let lastBadge = -1;
+function syncBadge(){
+  const n = data && data.channels ? data.channels.reduce((a, c) => a + (Number(c.unread) || 0), 0) : 0;
+  if (n === lastBadge) return; lastBadge = n;
+  try { if ('setAppBadge' in navigator) (n ? navigator.setAppBadge(n) : navigator.clearAppBadge()).catch(() => {}); } catch (_) {}
+  try { caches.open('chat-pass').then(c => c.put('/badge', new Response(String(n)))).catch(() => {}); } catch (_) {}   // the notification handler counts up from here
+}
 function render(){
+  syncBadge();
   const now = new Date();
   if (!data && signInfo && signInfo.name){ const L = ['paper', 'light', 'dark', 'ivory', 'burgundy', 'sky', 'lavender'], lk = L.indexOf(signInfo.look) >= 0 ? signInfo.look : 'paper';
     document.documentElement.className = lk; document.body.className = lk + (/ivory|burgundy|sky|lavender/.test(lk) ? ' paper' : ''); $('#brand').textContent = signInfo.name; document.title = signInfo.name;
