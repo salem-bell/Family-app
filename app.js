@@ -665,7 +665,7 @@ const VIEWS = {
       'Routines & chores':'Daily and weekly checklists', 'Home & car upkeep':"What's due around the house", 'Bills & renewals':'Due dates and Paid', 'Budget snapshot':'Spending vs. budget',
       'Savings goals':'Progress bars', 'Numbers':'Anything you track', 'Trips':'Countdowns and lists', 'Date nights':'Next one and ideas', 'Important dates':'Birthdays and anniversaries',
       'Notes board':'Notes and announcements', 'Links':'Pinned links', 'Follow-ups':'Messages to send', 'Inventory alerts':'Running low',
-      'Messages':'Family chat, groups and private messages', 'Family directory':'Phones, emails, addresses', 'Gatherings':'RSVPs and bring lists', 'Polls':'Quick family votes', 'Recipes':'The family cookbook', 'Marketplace':'Give things away, ask for help', 'Stories':'Family stories and memories', 'Games':'Daily Word and Family Map, with a weekly leaderboard' };
+      'Messages':'Family chat, groups and private messages', 'Family directory':'Phones, emails, addresses', 'Gatherings':'RSVPs and bring lists', 'Polls':'Quick family votes', 'Recipes':'The family cookbook', 'Marketplace':'Give things away, ask for help', 'Stories':'Family stories and memories', 'Games':'Word-go and Geo-go, with a weekly leaderboard' };
     const rows = draft.list.map(([f, onv], i) => `<div class="vrow"><button class="chk ${onv ? 'on' : ''}" data-vtoggle="${i}" aria-label="Show ${esc(f)}" style="pointer-events:auto;opacity:1">${onv ? '✓' : ''}</button>
       <span class="txt"><b>${esc(f)}</b> <span class="muted sm">${esc(desc[f] || '')}</span></span>
       <button class="mv" data-vmove="${i}" data-dir="-1" ${i === 0 ? 'disabled' : ''} aria-label="Move up">↑</button><button class="mv" data-vmove="${i}" data-dir="1" ${i === draft.list.length - 1 ? 'disabled' : ''} aria-label="Move down">↓</button></div>`).join('');
@@ -1525,7 +1525,7 @@ let pendingGo = (() => { try { const g = new URLSearchParams(location.search).ge
 })();
 
 /* =========================================================
-   Games: Daily Word and Family Map on one tab, with one weekly leaderboard.
+   Games: Word-go and Geo-go on one tab, with one weekly leaderboard.
    Answers are checked here on the phone (instant); every guess is saved to the sheet, which keeps score.
    ========================================================= */
 let gamePick = load('dash-game') === 'map' ? 'map' : 'word';
@@ -1573,7 +1573,7 @@ function gameShareButtons(which){
   return `<div class="acts" style="justify-content:center;margin-top:10px">${chatOn() && !ro() ? (gameShared(which) ? `<span class="muted sm" style="align-self:center">Shared to the family chat ✓</span>` : `<button class="btn go" data-gshare="${which}">Share to family chat</button>`) : ''}<button class="btn" data-gcopy="${which}">Copy result</button></div>`;
 }
 
-/* ---------- Daily Word ---------- */
+/* ---------- Word-go ---------- */
 function gameBoard(){
   const g = data.game.word, ans = gameAnswer(), mine = g.mine.g, rows = [];
   for (let r = 0; r < 6; r++){
@@ -1625,7 +1625,7 @@ function gameKey(k){
   if (/^[a-z]$/.test(k) && gameCur.length < 5){ gameCur += k; paintGame(); }
 }
 
-/* ---------- Family Map ---------- */
+/* ---------- Geo-go ---------- */
 const MAPJS = () => window.FAMILY_API ? 'map.js' : 'https://salem-bell.github.io/Family-app/map.js';
 function mapNeedData(){
   if (window.FAMILY_MAP || mapLoading) return;
@@ -1668,7 +1668,7 @@ function mapHow(){
 function mapMount(){
   const box = document.getElementById('gmapbox'), svg = document.getElementById('gmap'); if (!box || !svg || !window.FAMILY_MAP) return;
   const M = window.FAMILY_MAP;
-  if (!svg.firstChild) svg.innerHTML = `<rect x="-2000" y="-2000" width="${M.w + 4000}" height="${M.h + 4000}" class="gsea"/><path class="gland" d="${M.land}"/><path class="gborder" d="${M.borders}"/><path class="gstate" d="${M.states}"/><g id="gmarks"></g>`;
+  if (!svg.firstChild) svg.innerHTML = `<rect x="-2000" y="-2000" width="${M.w + 4000}" height="${M.h + 4000}" class="gsea"/><path class="gland" d="${M.land}"/>${M.lakes ? `<path class="gsea glake" d="${M.lakes}"/>` : ''}<path class="gborder" d="${M.borders}"/><path class="gstate" d="${M.states}"/><g id="gmarks"></g>`;
   const asp = () => (box.clientHeight || 280) / (box.clientWidth || 360);
   if (!mapVB) mapWorld();
   if (mapFitTo){ mapFit(mapFitTo); mapFitTo = null; }
@@ -1759,13 +1759,13 @@ function gameTodayCard(){
   const g = data.game;
   if (gamePick === 'map'){
     const m = g.map, them = m ? m.today : [];
-    if (!them.length) return card('Today · Family Map', empty('No one else has played yet today.'));
-    return card('Today · Family Map', them.map(t => `<div class="row"><span class="txt">${whoChip(t.who)}</span>${t.done ? (t.s.length ? `<span class="gemo">${t.s.map(mapEmoji).join('')}</span>` : '') + `<span class="tag">${t.total}/500</span>` : `<span class="muted sm">playing… ${t.n}/5</span>`}</div>`).join('')
+    if (!them.length) return card('Today · Geo-go', empty('No one else has played yet today.'));
+    return card('Today · Geo-go', them.map(t => `<div class="row"><span class="txt">${whoChip(t.who)}</span>${t.done ? (t.s.length ? `<span class="gemo">${t.s.map(mapEmoji).join('')}</span>` : '') + `<span class="tag">${t.total}/500</span>` : `<span class="muted sm">playing… ${t.n}/5</span>`}</div>`).join('')
       + (!m.done && them.some(t => t.done) ? `<div class="muted sm" style="padding:8px 14px">🔒 Finish yours to see how they did on each place.</div>` : ''));
   }
   const w = g.word, them = w.today;
-  if (!them.length) return card('Today · Daily Word', empty('No one else has played yet today.'));
-  return card('Today · Daily Word', them.map(t => `<div class="row"><span class="txt">${whoChip(t.who)}</span>${t.r ? (w.done && t.marks.length ? gameMiniGrid(t.marks) : '') + `<span class="tag">${t.r === 'Solved' ? t.n + '/6' : 'X/6'}</span>` : `<span class="muted sm">playing… ${t.n}/6</span>`}</div>`).join('')
+  if (!them.length) return card('Today · Word-go', empty('No one else has played yet today.'));
+  return card('Today · Word-go', them.map(t => `<div class="row"><span class="txt">${whoChip(t.who)}</span>${t.r ? (w.done && t.marks.length ? gameMiniGrid(t.marks) : '') + `<span class="tag">${t.r === 'Solved' ? t.n + '/6' : 'X/6'}</span>` : `<span class="muted sm">playing… ${t.n}/6</span>`}</div>`).join('')
     + (!w.done && them.some(t => t.r) ? `<div class="muted sm" style="padding:8px 14px">🔒 Finish yours to see their boards.</div>` : ''));
 }
 function gameMiniGrid(marks){ return `<span class="gmini">${marks.map(m => `<span>${m.split('').map(c => `<i class="${c}"></i>`).join('')}</span>`).join('')}</span>`; }
@@ -1774,15 +1774,15 @@ function gameAllCard(){
   const hasMap = !!data.game.map;
   return card('All-time', `<div class="row gdayhead"><span class="txt"></span><span class="gstat">🏆</span><span class="gstat">Word win %</span><span class="gstat">🔥</span>${hasMap ? '<span class="gstat">Map avg</span><span class="gstat">Map best</span>' : ''}</div>` +
     all.map(a => `<div class="row"><span class="txt">${whoChip(a.who)}</span><span class="gstat"><b>${a.titles}</b></span><span class="gstat">${a.words ? Math.round(a.solved / a.words * 100) : '–'}</span><span class="gstat">${a.streak}</span>${hasMap ? `<span class="gstat">${a.maps ? a.mapAvg : '–'}</span><span class="gstat">${a.maps ? a.mapBest : '–'}</span>` : ''}</div>`).join('')
-    + `<div class="muted sm" style="padding:8px 14px">🏆 weeks won · 🔥 Daily Word streak (days in a row solved)</div>`);
+    + `<div class="muted sm" style="padding:8px 14px">🏆 weeks won · 🔥 Word-go streak (days in a row solved)</div>`);
 }
 function viewGames(){
   const g = data.game;
   if (!g || !g.word) return card(TABNAME.games, empty('Games need the newest Code.gs. Organizer: paste it into Apps Script and deploy a new version.'));
   if (gamePick === 'map' && !g.map) gamePick = 'word';
   const last = g.last && g.last.champs.length ? `<div class="banner">🏆 Last week's champion${g.last.champs.length > 1 ? 's' : ''}: <b>${g.last.champs.map(esc).join(' & ')}</b> with ${g.last.pts} points</div>` : '';
-  const pick = g.map ? `<div class="gpick seg"><button data-gpick="word" aria-pressed="${gamePick === 'word'}">🔤 Daily Word${g.word.mine.r ? ' ✓' : ''}</button><button data-gpick="map" aria-pressed="${gamePick === 'map'}">🌎 Family Map${g.map.done ? ' ✓' : ''}</button></div>` : '';
-  const title = gamePick === 'map' ? 'Family Map' : 'Daily Word', date = new Date(g.day + 'T12:00').toLocaleDateString([], { weekday: 'long', month: 'short', day: 'numeric' });
+  const pick = g.map ? `<div class="gpick seg"><button data-gpick="word" aria-pressed="${gamePick === 'word'}">🔤 Word-go${g.word.mine.r ? ' ✓' : ''}</button><button data-gpick="map" aria-pressed="${gamePick === 'map'}">🌎 Geo-go${g.map.done ? ' ✓' : ''}</button></div>` : '';
+  const title = gamePick === 'map' ? 'Geo-go' : 'Word-go', date = new Date(g.day + 'T12:00').toLocaleDateString([], { weekday: 'long', month: 'short', day: 'numeric' });
   const play = gamePick === 'map' ? `<div class="gmapwrap">${mapGame()}</div>${mapHow()}` : `<div id="gamebox">${gameBox()}</div>${wordHow()}`;
   return last + pick + `<div class="gwrap"><div class="stack"><section class="card gplay"><h2 class="lbl">${title} #${g.no}<span>${date}</span></h2>${play}</section>${gamePick === 'map' ? mapPlacesCard() : ''}</div>
     <div class="stack">${gameWeekCard()}${gameTodayCard()}${gameAllCard()}</div></div>`;
@@ -1794,14 +1794,14 @@ function gameToday(){
   const w = g.word, m = g.map;
   const ws = w.mine.r ? (w.mine.r === 'Solved' ? `Solved in ${w.mine.g.length}` : 'Missed today') : w.mine.g.length ? `On guess ${w.mine.g.length + 1} of 6` : `${w.today.filter(t => t.r).length || 'No one'} in the family played`;
   const ms = m ? (m.done ? `${m.mine.s.reduce((a, b) => a + b, 0)} / 500` : m.mine.s.length ? `Place ${m.mine.s.length + 1} of 5` : `${m.today.filter(t => t.done).length || 'No one'} in the family played`) : '';
-  return card('Games #' + g.no, line('word', '🔤 Daily Word', !!w.mine.r, ws) + (m ? line('map', '🌎 Family Map', m.done, ms) : '')
+  return card('Games #' + g.no, line('word', '🔤 Word-go', !!w.mine.r, ws) + (m ? line('map', '🌎 Geo-go', m.done, ms) : '')
     + (i >= 0 ? `<div class="muted sm" style="padding:8px 14px">This week: #${i + 1} · ${wk[i].pts} pts${i > 0 ? ' · ' + esc(wk[0].who) + ' leads with ' + wk[0].pts : ''}</div>` : ''), `<button class="btn sm" data-go="games">Leaderboard</button>`);
 }
 function gameShareText(which){
   const g = data.game;
-  if (which === 'map'){ const m = g.map; return 'Family Map #' + g.no + '  ' + m.mine.s.reduce((a, b) => a + b, 0) + '/500\n' + m.mine.s.map(mapEmoji).join(''); }
+  if (which === 'map'){ const m = g.map; return 'Geo-go #' + g.no + '  ' + m.mine.s.reduce((a, b) => a + b, 0) + '/500\n' + m.mine.s.map(mapEmoji).join(''); }
   const w = g.word, ans = gameAnswer();
-  return 'Daily Word #' + g.no + '  ' + (w.mine.r === 'Solved' ? w.mine.g.length : 'X') + '/6\n' + w.mine.g.map(x => gameMarks(x, ans).replace(/g/g, '🟩').replace(/y/g, '🟨').replace(/b/g, '⬜')).join('\n');
+  return 'Word-go #' + g.no + '  ' + (w.mine.r === 'Solved' ? w.mine.g.length : 'X') + '/6\n' + w.mine.g.map(x => gameMarks(x, ans).replace(/g/g, '🟩').replace(/y/g, '🟨').replace(/b/g, '⬜')).join('\n');
 }
 document.addEventListener('click', ev => {
   const b = ev.target.closest && ev.target.closest('[data-gk],[data-gshare],[data-gcopy],[data-gpick],[data-gopick],[data-gzoom],[data-glock],[data-gnext],[data-gplacedel]'); if (!b || !data || !data.game || b.disabled) return;
@@ -1815,7 +1815,7 @@ document.addEventListener('click', ev => {
     else mapZoomAt([mapVB[0] + mapVB[2] / 2, mapVB[1] + mapVB[3] / 2], d.gzoom === 'in' ? 0.6 : 1.6, mapVB); return; }
   if ('glock' in d){ mapLock(); return; }
   if ('gnext' in d){ const m = data.game.map; mapReveal = -1; mapPin = null; mapVB = null; if (m.done) mapFitTo = m.mine.g.concat(mapPlaces().map(p => [p.la, p.lo])); render(); return; }
-  if (d.gplacedel){ if (!confirm('Remove this place from the Family Map?')) return; act('mapPlaceDel', { row: d.gplacedel, place: d.place }); return; }
+  if (d.gplacedel){ if (!confirm('Remove this place from Geo-go?')) return; act('mapPlaceDel', { row: d.gplacedel, place: d.place }); return; }
 });
 document.addEventListener('submit', ev => {
   const f = ev.target.closest && ev.target.closest('form[data-form="mapplace"]'); if (!f) return;

@@ -41,7 +41,7 @@ const FEATURES = [
   ['Recipes',            'recipes',   [0, 0, 1], 'The family cookbook: ingredients, steps and whose recipe it is.',         'The app, or the Recipes tab', ['Recipes']],
   ['Marketplace',        'market',    [0, 0, 1], 'Give things away or ask for a hand – tagged by region, so people nearby see it first.', 'The app; Settings › Regions', ['Marketplace']],
   ['Stories',            'stories',   [0, 0, 1], 'Family stories and memories, so they don\'t get lost.',                      'The app, or the Stories tab', ['Stories']],
-  ['Games',              'games',     [0, 0, 1], 'Two quick daily games – Daily Word and Family Map – with one weekly leaderboard. Monday\'s results go to the Everyone chat.', 'The app; Map places tab (your own places for the map); Settings › Family places per day', ['Game', 'Map plays', 'Map places', 'Game weeks']],
+  ['Games',              'games',     [0, 0, 1], 'Two quick daily games – Word-go and Geo-go – with one weekly leaderboard. Monday\'s results go to the Everyone chat.', 'The app; Map places tab (your own places for the map); Settings › Family places per day', ['Game', 'Map plays', 'Map places', 'Game weeks']],
   ['Inventory alerts',   'inventory', [0, 0, 0], 'Items below par (for a pantry, supplies or a shop).',                        'Inventory tab', ['Inventory']],
 ];
 const ED_INDEX = { personal: 0, couple: 1, family: 2 };
@@ -145,7 +145,7 @@ const SETTINGS = [
   ['Logo image link',       ['', ''],                                'Optional. A link to a small PNG or JPG (under 70 KB) shown at the top of the app. For a Google Drive file: Share › Anyone with the link, then paste the link here.'],
   ['Tagline',               ['', ''],                                'Optional. A short line under the name, like a date or a motto.'],
   ['Accent color',          ['#50602B', '#2F6FB2'],                  'Any color code, like #2F6FB2.'],
-  ['Family places per day', ['2', '2', '2'],                       'Family Map: how many places from the Map places tab to use each day (0–5). The rest are picked at random. With an empty Map places tab, every place is random.'],
+  ['Family places per day', ['2', '2', '2'],                       'Geo-go: how many places from the Map places tab to use each day (0–5). The rest are picked at random. With an empty Map places tab, every place is random.'],
 ];
 
 /* ============================================================
@@ -1212,8 +1212,8 @@ function peopleAct_(ss, p, me) {
 
 /* ============================================================
    Games: two quick daily games for the whole family, on one tab, with one weekly leaderboard.
-   • Daily Word – one five-letter word a day, 6 tries. Points: solved in 1 = 6 … in 6 = 1, missed = 0.
-   • Family Map – 5 places a day; tap where each one is. Up to 100 per place by distance; the day's
+   • Word-go – one five-letter word a day, 6 tries. Points: solved in 1 = 6 … in 6 = 1, missed = 0.
+   • Geo-go – 5 places a day; tap where each one is. Up to 100 per place by distance; the day's
      total ÷ 100 (rounded) goes on the leaderboard (0–5). Places come from the Map places tab
      (Settings › Family places per day of them), and the rest are picked at random from a built-in list.
    Weeks run Monday–Sunday. Every Monday the week's results go to the Everyone chat (a weekly trigger,
@@ -1245,7 +1245,7 @@ function gameWeekOf_(ymd) { return addDays_(ymd, -((dow_(ymd) + 6) % 7)); }   //
 const gameKey_ = no => 7 + (no % 11);
 const gameHide_ = (text, key) => Utilities.base64Encode(Utilities.newBlob(String(text)).getBytes().map((b, i) => (((b + 256) % 256) ^ ((key + i) % 256)) - (((((b + 256) % 256) ^ ((key + i) % 256)) > 127) ? 256 : 0)));
 
-/* ---------- Daily Word ---------- */
+/* ---------- Word-go ---------- */
 function gameWord_(ymd) {
   if (!MEMO_.gameOrder) MEMO_.gameOrder = gameShuffle_(GAME_WORDS_.length / 5, gameSalt_());
   const o = MEMO_.gameOrder, n = o.length, k = ((gameNo_(ymd) - 1) % n + n) % n;
@@ -1265,7 +1265,7 @@ function gameRows_(ss, tz) {
 const wordPts_ = r => r.result === 'Solved' ? 7 - r.guesses.length : 0;
 const gameGrid_ = (g, ans) => g.map(x => gameMarks_(x, ans).replace(/g/g, '🟩').replace(/y/g, '🟨').replace(/b/g, '⬜')).join('\n');
 
-/* ---------- Family Map ---------- */
+/* ---------- Geo-go ---------- */
 function mapBuiltIn_() { return MAP_PLACES_.split(';').map(s => { const [n, la, lo] = s.split('|'); return { n, la: Number(la), lo: Number(lo) }; }); }
 /** km between two points. */
 function mapKm_(a, b) {
@@ -1337,11 +1337,11 @@ function gameChamps_(wk) { const top = wk.rows.length ? wk.rows[0].pts : 0; retu
 function game_(ss, tz, today, me) {
   gameWeeklyCatchUp_(ss, tz, today);
   const words = gameRows_(ss, tz), maps = ss.getSheetByName('Map plays') ? mapRows_(ss, tz) : [], no = gameNo_(today), key = gameKey_(no);
-  // Daily Word
+  // Word-go
   const ans = gameWord_(today), wr = words.find(r => r.day === today && r.who === me.name), wMine = wr ? { g: wr.guesses, r: wr.result } : { g: [], r: '' }, wDone = !!wMine.r;
   const word = { done: wDone, w: wDone ? ans : gameHide_(ans, key), mine: wMine,
     today: words.filter(r => r.day === today && r.who !== me.name && (r.result || r.guesses.length)).map(r => ({ who: r.who, n: r.guesses.length, r: r.result, marks: wDone && r.result ? r.guesses.map(g => gameMarks_(g, ans)) : [] })) };
-  // Family Map
+  // Geo-go
   let map = null;
   if (ss.getSheetByName('Map plays')) {
     const places = mapDay_(ss, tz, today), mr = maps.find(r => r.day === today && r.who === me.name), mMine = mr ? { g: mr.guesses, s: mr.scores } : { g: [], s: [] }, mDone = mMine.s.length >= 5;
@@ -1402,7 +1402,7 @@ function mapGuess_(ss, p, me, today, tz) {
   const row = [today, me.name, g.join(';'), s.join(','), done ? total : '', done ? new Date() : ''];
   if (i >= 0) sh.getRange(i + 2, 1, 1, 6).setValues([row]); else sh.appendRow(row);
 }
-/** Organizers add (looked up on Google Maps) or remove places for the Family Map. */
+/** Organizers add (looked up on Google Maps) or remove places for Geo-go. */
 function mapPlaceAct_(ss, p, me, tz) {
   if (me.role !== 'Organizer') throw new Error('Only organizers can change the map places');
   const sh = ss.getSheetByName('Map places'); if (!sh) throw new Error('The Map places tab is missing. Ask the organizer to run Dashboard › 1. Set up.');
@@ -1425,10 +1425,10 @@ function gameShare_(ss, me, today, tz, which) {
   let text;
   if (which === 'map') {
     const r = maps.find(x => x.day === today && x.who === me.name); if (!r || !r.done) throw new Error('Finish today\'s map first');
-    text = 'Family Map #' + no + '  ' + r.total + '/500\n' + r.scores.map(mapEmoji_).join('');
+    text = 'Geo-go #' + no + '  ' + r.total + '/500\n' + r.scores.map(mapEmoji_).join('');
   } else {
     const r = words.find(x => x.day === today && x.who === me.name); if (!r || !r.result) throw new Error('Finish today\'s word first');
-    text = 'Daily Word #' + no + '  ' + (r.result === 'Solved' ? r.guesses.length : 'X') + '/6\n' + gameGrid_(r.guesses, gameWord_(today));
+    text = 'Word-go #' + no + '  ' + (r.result === 'Solved' ? r.guesses.length : 'X') + '/6\n' + gameGrid_(r.guesses, gameWord_(today));
   }
   const wk = gameWeek_(words, maps, gameWeekOf_(today)), rank = wk.rows.findIndex(x => x.who === me.name) + 1;
   if (rank) text += '\n' + (rank === 1 ? '🥇 ' : '') + 'This week: #' + rank + ' · ' + wk.rows[rank - 1].pts + ' pts';
