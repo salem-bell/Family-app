@@ -7,7 +7,7 @@
  * Deploy > Manage deployments > pencil > New version > Deploy, then Dashboard > 1. Set up again.
  */
 
-const VERSION = '3.5';
+const VERSION = '3.6';
 const EDITIONS = ['Personal', 'Couple', 'Family'];
 const ROLES = ['Organizer', 'Member', 'Viewer'];
 const PALETTE = ['#2F6FB2', '#C2185B', '#2E7D32', '#EF6C00', '#6A1B9A', '#00838F', '#8D6E63', '#455A64'];
@@ -561,6 +561,7 @@ function state_(ss, me) {
       if (chatLive_(ss)) { out.chat = { url: setting_(ss, 'Chat service address').replace(/\/+$/, '') }; out.channels = []; } else out.channels = channels_(ss, me); } catch (e) { errors.push('Messages: ' + e.message); } }
   out.push = pushInfo_(ss, me);
   out.phoneApp = /^https:\/\//.test(setting_(ss, 'Phone app address')) ? setting_(ss, 'Phone app address') : '';
+  if (me.role === 'Organizer') { try { out.admin = admin_(ss, me); } catch (e) { errors.push('People: ' + e.message); } }
   return out;
 }
 
@@ -849,6 +850,7 @@ function act_(ss, p, me) {
 
   if (/^(newChannel|editChannel|deleteMessage)$/.test(A)) return chatAct_(ss, p, me);
   if (/^push(Sub|Unsub|Prefs|Test)$/.test(A)) return pushAct_(ss, p, me);
+  if (/^person(Add|Code|Link|Role|Active|Household)$/.test(A)) return peopleAct_(ss, p, me);
   if (/^(game(Guess|Share)|map(Guess|PlaceAdd|PlaceDel))$/.test(A)) return gameAct_(ss, p, me, today, tz);
   switch (A) {
     case 'saveView': {
@@ -1150,6 +1152,62 @@ function familyExamples_(name, d) {
     case 'Events': return [['ev01', d(5), '19:00', '20:00', 'Family video call (example)', 'Video call', '', 'Monthly', '', '', 'Dashboard']];
   }
   return null;
+}
+
+/* ============================================================
+   People, from the app (Organizers only): add someone, give a new code or link, change a role, turn someone off.
+   ============================================================ */
+function newCode_(ss) {
+  const used = {}; rows_(ss, 'People').forEach(r => { if (/^\d{4}$/.test(String(r[8] || ''))) used[String(r[8])] = 1; });
+  let c; do { c = String(Math.floor(Math.random() * 10000)).padStart(4, '0'); } while (used[c] || /^(\d)\1{3}$/.test(c) || '0123456789'.indexOf(c) >= 0 || '9876543210'.indexOf(c) >= 0);
+  return c;
+}
+function admin_(ss, me) {
+  if (me.role !== 'Organizer') return null;
+  const url = webUrl_(ss), phone = /^https:\/\//.test(setting_(ss, 'Phone app address')) ? setting_(ss, 'Phone app address') : '', only = codeOnly_(ss);
+  return { codes: codeSignIn_(ss), only, app: phone || url, links: !only && !!url,
+    people: rows_(ss, 'People').map((r, i) => ({ row: i + 2, name: String(r[0]).trim(), household: String(r[1] || ''), role: ROLES.indexOf(String(r[2])) >= 0 ? String(r[2]) : 'Member',
+      active: truthy_(r[7]), code: String(r[8] || ''), link: !only && url && r[5] ? url + '#' + r[5] : '', last: isoOf_(r[11]) })).filter(p => p.name) };
+}
+function peopleAct_(ss, p, me) {
+  if (me.role !== 'Organizer') throw new Error('Only organizers can change people');
+  const sh = ss.getSheetByName('People'); if (!sh) throw new Error('The People tab is missing');
+  peopleOk_(ss);
+  if (sh.getLastColumn() < TABS.People.length) buildTab_(ss, 'People');
+  const rows = rows_(ss, 'People'), norm = s => String(s || '').trim().toLowerCase().replace(/\s+/g, ' ');
+  if (p.action === 'personAdd') {
+    const name = clean_(p.name, 60).replace(/^'/, ''), role = ROLES.indexOf(String(p.role)) >= 0 ? String(p.role) : 'Member';
+    if (!name) throw new Error('Type a name');
+    if (rows.some(r => norm(r[0]) === norm(name))) throw new Error(name + ' is already on the People tab');
+    const used = rows.map(r => String(r[3] || '').toUpperCase()), color = PALETTE.find(c => used.indexOf(c) < 0) || PALETTE[rows.length % PALETTE.length];
+    const row = [name, clean_(p.household || '', 100), role, color, '', newKey_(), '', true, newCode_(ss), '', '', ''];
+    sh.appendRow(row); sh.getRange(sh.getLastRow(), 9).setNumberFormat('@').setValue(row[8]);
+    SpreadsheetApp.flush(); memoReset_(false);
+    try { ensureChatIds_(ss); } catch (e) {}
+  } else {
+    const i = rows.findIndex(r => norm(r[0]) === norm(p.name)); if (i < 0) throw new Error('Couldn\'t find ' + p.name + ' on the People tab – refresh');
+    const r = i + 2, self = norm(p.name) === norm(me.name);
+    const orgs = rows.filter(x => x[0] && truthy_(x[7]) && String(x[2]) === 'Organizer').length;
+    switch (p.action) {
+      case 'personCode': if (self) throw new Error('Change your own code on the People tab in the sheet (this device would be signed out)');
+        sh.getRange(r, 9).setNumberFormat('@').setValue(newCode_(ss)); break;
+      case 'personLink': if (self) throw new Error('Make your own new link from the sheet (Dashboard › New link for the selected person)');
+        sh.getRange(r, 6).setValue(newKey_()); sh.getRange(r, 7).setValue(''); break;
+      case 'personRole': { const role = ROLES.indexOf(String(p.role)) >= 0 ? String(p.role) : '';
+        if (!role) throw new Error('Pick a role');
+        if (self && role !== 'Organizer') throw new Error('You can\'t take away your own organizer role here');
+        if (String(rows[i][2]) === 'Organizer' && role !== 'Organizer' && orgs <= 1) throw new Error('Keep at least one organizer');
+        sh.getRange(r, 3).setValue(role); break; }
+      case 'personActive': { const on = p.on === true || p.on === '1';
+        if (self && !on) throw new Error('You can\'t turn yourself off');
+        if (!on && String(rows[i][2]) === 'Organizer' && orgs <= 1) throw new Error('Keep at least one organizer');
+        sh.getRange(r, 8).setValue(on); break; }
+      case 'personHousehold': sh.getRange(r, 2).setValue(clean_(p.household || '', 100)); break;
+      default: throw new Error('Unknown change');
+    }
+  }
+  SpreadsheetApp.flush(); memoReset_(false);
+  if (chatLive_(ss)) { try { chatSyncRoster_(ss, true); } catch (e) {} }
 }
 
 /* ============================================================
