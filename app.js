@@ -10,15 +10,45 @@ let tab = load('dash-tab') || 'today', mineOnly = load('dash-mine') === '1', men
 const isEditing = () => Object.keys(editing).length > 0 || !!draft;
 
 /** The installed phone app (GitHub Pages) reaches the same script over HTTPS; the Google-served page uses google.script.run. */
-async function post(fn, args){
-  const ctl = new AbortController(), t = setTimeout(() => ctl.abort(), 45000);
+/* Requests out right now. A phone that sleeps mid-request (locked screen, app switched away) can leave a fetch hanging
+   with no answer ever coming – the app then sat on old data or "Saving…" until it was closed. When the app comes back,
+   anything that has been waiting more than a few seconds is cancelled and tried again straight away. */
+const INFLIGHT = new Set();
+async function post(fn, args, retried){
+  const p = fn === 'api' && args && args[1], isRead = fn === 'api' && !(p && (p.action || p.actions));
+  const ctl = new AbortController(), rec = { ctl, at: Date.now(), read: isRead }, t = setTimeout(() => ctl.abort(), isRead ? 20000 : 45000);
+  INFLIGHT.add(rec);
   try {
     const res = await fetch(window.FAMILY_API, { method: 'POST', body: JSON.stringify({ fn, args }), signal: ctl.signal, redirect: 'follow' });   // text/plain: no CORS preflight
     const out = await res.json();
     if (out && out.error) throw new Error(out.error);
     return out.result;
-  } catch (e) { if (e.name === 'AbortError') throw new Error('timeout'); if (e instanceof TypeError) throw new Error('offline'); throw e; }
-  finally { clearTimeout(t); }
+  } catch (e) {
+    const m = e.name === 'AbortError' ? 'timeout' : e instanceof TypeError ? 'offline' : String(e && e.message || e);
+    if (isRead && !retried && (m === 'timeout' || m === 'offline')) return post(fn, args, true);   // one quick retry for a load (saves have their own retry queue)
+    throw e.name === 'AbortError' || e instanceof TypeError ? new Error(m) : e;
+  }
+  finally { clearTimeout(t); INFLIGHT.delete(rec); }
+}
+function unstick(){ const now = Date.now(); INFLIGHT.forEach(r => { if (now - r.at > (r.read ? 4000 : 15000)) r.ctl.abort(); }); }
+/* Fast loading (phone app only): the sheet keeps a ready-made copy of everyone's data on Cloudflare (data.edge), refreshed
+   within a minute of any change. Loads come from there; saves always go to the sheet. After you save, a copy older than your
+   save is ignored, so your own change never seems to vanish. No copy, too old, can't reach it – the app asks the sheet as before. */
+let EDGE = load('dash-edge') || '', lastWriteAt = Number(load('dash-lastwrite') || 0);
+function wrote(got){ const t = Date.parse(got && got.updated) || Date.now(); if (t > lastWriteAt){ lastWriteAt = t; save('dash-lastwrite', String(t)); } }
+async function edgeLoad(){
+  if (!EDGE || !KEY || !window.FAMILY_API) return null;
+  const ctl = new AbortController(), rec = { ctl, at: Date.now(), read: true }, t0 = Date.now(), t = setTimeout(() => ctl.abort(), 6000);
+  INFLIGHT.add(rec);
+  try {
+    const r = await fetch(EDGE + '/s/family/state', { method: 'POST', body: JSON.stringify({ token: KEY }), signal: ctl.signal });
+    if (!r.ok) return null;
+    const at = Number(r.headers.get('x-pushed-at') || 0), out = await r.json();
+    if (!out || !out.me || !out.order || at < lastWriteAt) return null;
+    console.info('[Family] loaded from Cloudflare in ' + (Date.now() - t0) + 'ms (data from ' + Math.round((Date.now() - at) / 1000) + 's ago)');
+    return out;
+  } catch (_) { return null; }
+  finally { clearTimeout(t); INFLIGHT.delete(rec); }
 }
 function call(p){
   if (window.FAMILY_API) return post('api', [KEY, p]);
@@ -120,13 +150,15 @@ function runFn(name, ...args){
   })]);
 }
 function loadSignInfo(){ if (signInfo) return; signInfo = { loading: true }; runFn('signInInfo').then(i => { signInfo = i || {}; render(); }, () => { signInfo = {}; render(); }); }
-async function refresh(p){
+async function refresh(p, o){
   if (!KEY){ data = null; lastErr = 'nokey'; loadSignInfo(); render(); return; }
   if (!(p && p.action) && outbox.length && queueOK()){ scheduleFlush(0); return; }   // saving first brings back the fresh picture anyway
   const isAct = !!(p && p.action), seq = ++seqStarted;
   if (isAct){ pendingActs++; lastActSeq = seq; }
   let got = null, err = null;
-  try { got = await call(p || {}); } catch (e) { err = e; }
+  try { got = (!isAct && !(o && o.fresh) && await edgeLoad()) || await call(p || {}); } catch (e) { err = e; }
+  if (got && got.edge !== undefined && got.edge !== EDGE){ EDGE = got.edge; save('dash-edge', EDGE); }
+  if (isAct && got && !err) wrote(got);
   if (isAct) pendingActs--;
   const stale = seq < seqShown || (!isAct && pendingActs > 0) || (isAct && seq !== lastActSeq) || (!err && outbox.length > 0 && queueOK());
   if (stale && !err){ if (isAct && !pendingActs && seq === lastActSeq) refresh(); return; }
@@ -793,7 +825,7 @@ document.addEventListener('click', ev => {
   if (d.tab || d.go) menuOpen = false;
   if (d.tab){ if (tab === 'view') draft = null; if (LIVE && chat.open && tab === 'chat' && d.tab !== 'chat') LIVE.send({ t: 'close' }); const back = d.tab === 'chat' && tab !== 'chat' && chat.open; tab = d.tab; if (back && LIVE) setTimeout(() => openChat(chat.open), 0); save('dash-tab', tab); window.scrollTo(0, 0); render(); return; }
   if (d.go){ if (d.go !== 'view') draft = null; tab = d.go; if (d.go !== 'view') save('dash-tab', tab); window.scrollTo(0, 0); render(); return; }
-  if (b.hasAttribute('data-refresh')){ ev.preventDefault(); refresh(); return; }
+  if (b.hasAttribute('data-refresh')){ ev.preventDefault(); refresh(undefined, { fresh: true }); return; }   // the refresh button always asks the sheet itself
   if ('dismiss' in d){ const v = data.view || {}; data.view = Object.assign({}, v, { features: myFeatures(), seen: enabledFeatures() }); render(); act('saveView', { features: JSON.stringify(myFeatures()), look: v.look || '', text: v.text || '', seen: JSON.stringify(enabledFeatures()) }); return; }
   if ('mine' in d){ mineOnly = d.mine === '1'; save('dash-mine', mineOnly ? '1' : '0'); render(); return; }
   if (d.expand){ expanded[d.expand] = !expanded[d.expand]; render(); return; }
@@ -1390,7 +1422,7 @@ async function flush(){
     if (/unauthorized|expired/.test(msg)){ refresh(); return; }                  // sign-in screen; the queue waits for the next sign-in
     retryMs = Math.min(retryMs ? retryMs * 2 : 5000, 60000); saveState = 'retry'; showSaving(); scheduleFlush(retryMs); return;
   }
-  retryMs = 0;
+  retryMs = 0; wrote(got);
   const done = {}; batch.forEach(x => { done[x.op] = 1; });
   outbox = outbox.filter(x => !done[x.op]); keepOutbox();
   const failed = (got && got.results || []).filter(r => r.error);
@@ -1515,7 +1547,9 @@ document.addEventListener('submit', ev => { const f = ev.target; if (f && f.data
 /** Is anything half-filled-in on screen? Then the automatic refresh waits (the focused box alone isn't enough: tapping into an empty date box used to count as "not typing"). */
 const typing = () => { const a = document.activeElement; return isEditing() || (a && /INPUT|TEXTAREA|SELECT/.test(a.tagName) && a.value) || formsDirty(); };
 document.addEventListener('keydown', ev => { if (ev.key === 'Escape' && menuOpen){ menuOpen = false; render(); $('#menubtn').focus(); } });
-document.addEventListener('visibilitychange', () => { if (!document.hidden && !typing() && !pendingActs) refresh(); });
+document.addEventListener('visibilitychange', () => { if (document.hidden) return; unstick(); if (!typing() && !pendingActs) refresh(); });
+window.addEventListener('pageshow', e => { if (e.persisted){ unstick(); if (!typing() && !pendingActs) refresh(); } });   // reopened from the phone's app switcher
+window.addEventListener('online', () => unstick());
 setInterval(() => { if (!document.hidden && !typing() && !pendingActs) refresh(); }, 2 * 60 * 1000);
 setInterval(() => { if (!typing() && data) render(); }, 60 * 1000);
 function readKeyFromLink(){

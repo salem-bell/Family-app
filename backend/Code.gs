@@ -7,7 +7,7 @@
  * Deploy > Manage deployments > pencil > New version > Deploy, then Dashboard > 1. Set up again.
  */
 
-const VERSION = '3.6';
+const VERSION = '3.7';
 const EDITIONS = ['Personal', 'Couple', 'Family'];
 const ROLES = ['Organizer', 'Member', 'Viewer'];
 const PALETTE = ['#2F6FB2', '#C2185B', '#2E7D32', '#EF6C00', '#6A1B9A', '#00838F', '#8D6E63', '#455A64'];
@@ -138,6 +138,8 @@ const SETTINGS = [
   ['Delete chat photos after (days)', ['60', '60', '60'],          'Photos sent in Messages are kept in a private Drive folder and deleted after this many days.'],
   ['Chat service address',  ['', '', ''],                            'Live Messages (the Cloudflare team-chat Worker), e.g. https://team-chat….workers.dev. Blank = Messages run on this sheet (slower; messages saved in the Messages tab).'],
   ['Chat service secret',   ['', '', ''],                            'Must match SECRET_FAMILY in the team-chat Worker. Don\'t share it.'],
+  ['Data service address',  ['', '', ''],                            'Fast loading (the Cloudflare team-data Worker), e.g. https://team-data….workers.dev. Blank = the app loads straight from this sheet (slower).'],
+  ['Data service secret',   ['', '', ''],                            'Must match DATA_SECRET_FAMILY in the team-data Worker. Don\'t share it.'],
   ['Push service address',  ['', '', ''],                            'For phone notifications: the Cloudflare Worker address (https://….workers.dev). Blank = no notifications. The same Worker can serve several dashboards.'],
   ['Push service secret',   ['', '', ''],                            'Must match SECRET in that Worker. Don\'t share it.'],
   ['Push public key',       ['', '', ''],                            'Must match VAPID_PUBLIC in that Worker.'],
@@ -160,6 +162,7 @@ function onOpen() {
     .addItem('New links for everyone', 'resetAll')
     .addSeparator()
     .addItem('Post last week\'s game results', 'gameWeeklyNow')
+    .addItem('Fast loading: turn on / check', 'setupFastLoading')
     .addToUi();
 }
 
@@ -511,6 +514,7 @@ function api(key, p) {
     const lock = LockService.getScriptLock();
     if (lock.tryLock(8000)) lock.releaseLock();
   }
+  if (results || p.action) dataDirty_();              // fast loading: everyone's copy is refreshed within a minute
   memoReset_(true);                                  // the read below can reuse each tab it has already read
   try { const out = state_(ss, me); if (results) out.results = results; return out; } finally { memoReset_(false); }
 }
@@ -525,6 +529,7 @@ function state_(ss, me) {
   const out = {
     version: VERSION, edition: cfg.edition, name: cfg.name, me, lists: cfg.lists, look: cfg.look, accent: cfg.accent,
     budgetShows: cfg.budgetShows, logo: logo_(ss), tagline: setting_(ss, 'Tagline').slice(0, 120), today, features: on, sheet: me.role === 'Organizer' ? ss.getUrl() : '', updated: new Date().toISOString(), errors,
+    edge: dataLive_(ss) ? setting_(ss, 'Data service address').replace(/\/+$/, '') : '',
     people: rows_(ss, 'People').filter(r => r[0] && truthy_(r[7])).map(r => ({ name: String(r[0]), household: String(r[1] || ''), color: String(r[3] || ''), id: String(r[9] || ''), role: String(r[2] || 'Member') })),
     order: FEATURES.map(f => [f[0], f[1]]),
     view: view_(ss, me.name), signin: codeSignIn_(ss),
@@ -2306,4 +2311,72 @@ function chatPush(payload, sig) {
     return { uid, kind: 'msg', direct: direct || m, title: m ? who + ' mentioned you in # ' + p.name : direct ? (p.kind === 'group' ? who + ' · ' + p.name : String(p.from.name)) : '# ' + p.name + ' · ' + who,
       body: text ? text.slice(0, 200) : '📷 Photo', url: '?go=chat:' + p.ch, tag: 'chat-' + p.ch }; }));
   return { ok: true };
+}
+
+/* ============================================================
+   Fast loading (Cloudflare team-data Worker, the "family" space)
+   Every minute, if anything changed (a save in the app, an edit in the sheet), this builds each person's app data –
+   the same thing the app would get from this sheet – and sends it to the Worker. The phone app loads from there in a
+   fraction of a second; saves still come here. At least every 14 minutes it re-sends so the Worker knows the data is
+   current. If the Worker is down or behind, the app quietly loads from here instead.
+   ============================================================ */
+function dataLive_(ss) { return !!(setting_(ss, 'Data service address') && setting_(ss, 'Data service secret')); }
+function dataDirty_() { try { CacheService.getScriptCache().put('DATA_DIRTY', String(Date.now()), 21600); } catch (e) {} }
+/** Simple trigger: edits made by hand in the sheet reach the app within a minute. */
+function onEdit(e) { dataDirty_(); }
+function pushDataTick() { try { pushData_(false); } catch (e) { console.warn('fast loading: ' + e); } }
+const hex_ = bytes => bytes.map(b => ('0' + ((b + 256) % 256).toString(16)).slice(-2)).join('');
+function pushData_(force) {
+  const ss = SpreadsheetApp.getActive(); memoReset_(false);
+  if (!dataLive_(ss) || PropertiesService.getScriptProperties().getProperty('SHEET_ID') !== ss.getId()) return { off: true };
+  const c = CacheService.getScriptCache(), props = PropertiesService.getScriptProperties(), tz = ss.getSpreadsheetTimeZone(), today = Utilities.formatDate(new Date(), tz, 'yyyy-MM-dd');
+  const last = Number(props.getProperty('DATA_PUSHED') || 0), dirtyAt = Number(c.get('DATA_DIRTY') || 0), now = Date.now();
+  if (!force && dirtyAt < last && now - last < 14 * 60000 && props.getProperty('DATA_DAY') === today) return { idle: true };
+  const lock = LockService.getScriptLock(); if (!lock.tryLock(3000)) return { busy: true };
+  try {
+    peopleOk_(ss);                                   // columns dragged out of place: send nothing (the app falls back to the sheet and shows the message)
+    const started = Date.now(), full = force || now - Number(props.getProperty('DATA_FULL') || 0) > 3600000;
+    feedToken_('x'); const key = props.getProperty('FEED_SECRET');   // makes the signing key if this sheet has never had one
+    const code = codeSignIn_(ss), linksOk = !codeOnly_(ss), days = sessionDays_(ss);
+    memoReset_(true);
+    const people = rows_(ss, 'People').filter(r => r[0] && r[5] && truthy_(r[7]));
+    const old = full ? {} : JSON.parse(c.get('DATA_H') || '{}'), hashes = {}, states = {}, roster = [];
+    people.forEach(r => {
+      const feed = feedToken_(String(r[5])), id = String(r[9] || '') || 'f_' + feed;
+      if (code) roster.push({ id, match: 'S.' + feed, pre: 'session|' + r[5] + '|' + String(r[8]).trim() + '|', days });   // what sessionSig_() signs before the issue time
+      if (linksOk) roster.push({ id, match: 'L.' + hex_(Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, String(r[5]), Utilities.Charset.UTF_8)) });
+      const me = { name: String(r[0]), household: String(r[1] || ''), role: ROLES.indexOf(String(r[2])) >= 0 ? String(r[2]) : 'Member', feed, id: String(r[9] || '') };
+      try {
+        const txt = JSON.stringify(state_(ss, me)), h = Utilities.base64Encode(Utilities.computeDigest(Utilities.DigestAlgorithm.MD5, txt.replace(/"updated":"[^"]*",?/, ''), Utilities.Charset.UTF_8));
+        hashes[id] = h; if (old[id] !== h) states[id] = txt;
+      } catch (e) { console.warn('fast loading: couldn\'t build data for ' + me.name + ': ' + e); }
+      if (!MEMO_ON_) memoReset_(true);                // keep reusing tabs already read (a write inside state_ switches this off)
+    });
+    const body = JSON.stringify({ at: started, tz, today, tokenKey: key, roster, states });
+    const res = UrlFetchApp.fetch(setting_(ss, 'Data service address').replace(/\/+$/, '') + '/s/family/push', { method: 'post', contentType: 'application/json; charset=utf-8',
+      payload: Utilities.newBlob(body).getBytes(), headers: { 'x-sig': chatSign_(setting_(ss, 'Data service secret'), body) }, muteHttpExceptions: true });
+    if (res.getResponseCode() !== 200) throw new Error('The data service answered ' + res.getResponseCode() + ': ' + res.getContentText().slice(0, 200) + ' – check Settings › Data service address and secret');
+    const out = JSON.parse(res.getContentText());
+    // people who opened the app through the fast path still count as "last active"
+    Object.keys(out.seen || {}).forEach(id => { if (/^f_/.test(id)) return; const k = 'seen_' + id, ms = Number(out.seen[id]) || 0; if (ms > Number(c.get(k) || 0)) c.put(k, String(ms), 21600); });
+    // anyone the Worker has no copy for (it was reset, or a build failed) gets sent next minute
+    const missing = Object.keys(hashes).filter(id => (out.have || []).indexOf(id) < 0);
+    missing.forEach(id => { delete hashes[id]; });
+    try { c.put('DATA_H', JSON.stringify(hashes), 21600); if (missing.length) dataDirty_(); } catch (e) {}
+    const p = { DATA_PUSHED: String(started), DATA_DAY: today }; if (full) p.DATA_FULL = String(started); props.setProperties(p);
+    return { ok: true, people: people.length, sent: Object.keys(states).length, kb: Math.round(body.length / 1024), ms: Date.now() - started };
+  } finally { memoReset_(false); lock.releaseLock(); }
+}
+/** Menu: Dashboard › Fast loading. Adds the two Settings rows and a secret if missing, starts the every-minute sender, and sends everything once. */
+function setupFastLoading() {
+  const ss = SpreadsheetApp.getActive(), ui = ui_(), sh = ss.getSheetByName('Settings');
+  if (!sh) { ui.alert('Run Dashboard › 1. Set up this sheet first.'); return; }
+  SETTINGS.filter(x => /^Data service/.test(x[0])).forEach(([label, , help]) => { if (colValues_(sh, 1).indexOf(label) < 0) sh.appendRow([label, '', help]); });
+  memoReset_(false);
+  if (!setting_(ss, 'Data service secret')) putSetting_(ss, 'Data service secret', newKey_());
+  if (!ScriptApp.getProjectTriggers().some(t => t.getHandlerFunction() === 'pushDataTick')) ScriptApp.newTrigger('pushDataTick').timeBased().everyMinutes(1).create();
+  memoReset_(false);
+  if (!dataLive_(ss)) { ui.alert('Almost there', 'Paste the team-data Worker address into Settings › Data service address, and put the Data service secret into the Worker (DATA_SECRET_FAMILY). Then run this again.', ui.ButtonSet.OK); return; }
+  try { const r = pushData_(true); ui.alert('Fast loading is on', 'Sent ' + r.people + ' people\'s data (' + r.kb + ' KB) in ' + (r.ms / 1000).toFixed(1) + 's. From now on the phone app loads from Cloudflare, and changes reach it within about a minute.', ui.ButtonSet.OK); }
+  catch (e) { ui.alert('Fast loading isn\'t working yet', String(e.message || e), ui.ButtonSet.OK); }
 }

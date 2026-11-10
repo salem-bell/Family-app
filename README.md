@@ -18,5 +18,8 @@ The **Games** tab has two daily games with one weekly leaderboard:
 
 Each Monday the week's results go to the Everyone chat and the *Game weeks* tab (a Monday 8 AM trigger made by Dashboard › 1. Set up, or the first app visit that Monday). Dashboard › Post last week's game results sends it by hand.
 
+## Fast loading
+The phone app can load from a ready-made copy on Cloudflare instead of waiting on Google (a fraction of a second instead of 5–30 s). It's the `team-data` Worker in the Peregrine-App repo (`data-service/`), "family" space. The sheet sends each person's data there every minute when something changed (Dashboard › *Fast loading: turn on / check* starts that); saves still go to the sheet. Settings needs *Data service address* and *Data service secret* (the same value as the Worker's `DATA_SECRET_FAMILY`). If the Worker is down or behind, the app loads from the sheet as before. The ↻ button always asks the sheet.
+
 ## Notifications
 They use the same Cloudflare Worker as the Peregrine Team app. The sheet's Settings tab needs Push service address, Push service secret and Push public key (copy them from the Peregrine sheet's Settings).
