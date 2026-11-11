@@ -50,7 +50,17 @@ async function edgeLoad(){
   } catch (_) { return null; }
   finally { clearTimeout(t); INFLIGHT.delete(rec); }
 }
+/* Only what changed: the phone sends the version it holds; unchanged sections come back listed under "same" and are kept. */
+function haveNow(){ return data && data.ver ? { ver: data.ver, h: data.h || {} } : undefined; }
+function mergeGot(keep, got){
+  if (!got || !got.same || !keep || !keep.me || !got.me || keep.me.name !== got.me.name || keep.me.role !== got.me.role) return got;
+  const out = Object.assign({}, got), names = got.same === '*' ? Object.keys(keep.h || {}) : got.same;
+  names.forEach(k => { if (k in keep) out[k] = keep[k]; });
+  if (got.same === '*'){ ['cal', 'regions', 'chat', 'channels', 'admin'].forEach(k => { if (!(k in out) && k in keep) out[k] = keep[k]; }); }
+  return out;
+}
 function call(p){
+  if (p && typeof p === 'object' && !p.have) p = Object.assign({ have: haveNow() }, p);
   if (window.FAMILY_API) return post('api', [KEY, p]);
   const timeout = new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 45000));
   return Promise.race([timeout, new Promise((res, rej) => {
@@ -170,7 +180,7 @@ async function refresh(p, o){
       data = null; lastErr = 'mismatch'; lastMsg = 'Code.gs is ' + (got && got.version ? 'version ' + got.version : 'an older version') + ', but this page needs version 3.';
       render(); return;
     }
-    data = got; lastErr = null; liveSync(); save('dash-cache', JSON.stringify(data));
+    data = mergeGot(data, got); lastErr = null; liveSync(); save('dash-cache', JSON.stringify(data));
     if (pendingGo){ const g = pendingGo; pendingGo = ''; setTimeout(() => goTo(g), 0); }
     pushCheck();
   }
@@ -747,21 +757,40 @@ const THEME_DARK = { sky: 'skynight', lavender: 'lavendernight', ivory: 'burgund
 const themeOf = look => ({ dark: 'light', burgundy: 'ivory', skynight: 'sky', lavendernight: 'lavender', papernight: 'paper' })[look] || (THEME_DARK[look] ? look : '');
 const impliedMode = look => /^(dark|burgundy)$/.test(look || '') ? 'dark' : '';
 if (window.matchMedia) try { window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => { if (data) applyLook(); }); } catch (_) {}
-function applyLook(){
-  const v = data.view || {}, L = ['paper', 'light', 'dark', 'ivory', 'burgundy', 'sky', 'lavender'], want = (draft && draft.look) || v.look;
-  const chosen = themeOf(want) || themeOf(data.look) || 'sky';
-  const mode = (draft && draft.mode) || v.mode || impliedMode(want || data.look) || 'light', sysDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+/** The classes for a theme (look), Light/Dark/Auto (mode) and text size – shared by the app, its loading screen and sign-in. */
+function lookCls(want, mode, large){
+  const chosen = themeOf(want) || 'sky', sysDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+  mode = mode || impliedMode(want) || 'light';
   const look = mode === 'dark' || (mode === 'auto' && sysDark) ? THEME_DARK[chosen] : chosen;
   const brandLook = /^(ivory|burgundy|sky|skynight|lavender|lavendernight)$/.test(look);
-  const large = (draft ? draft.text : v.text) === 'large';
   const twin = look === 'skynight' ? ' sky' : look === 'lavendernight' ? ' lavender' : look === 'papernight' ? ' paper' : '';
-  const cls = look + twin + (brandLook ? ' paper' : '') + (large ? ' large' : '') + (ro() ? ' ro' : '') + (document.body.classList.contains('inchat') ? ' inchat' : '');
-  document.body.className = cls; document.documentElement.className = look + twin + (large ? ' large' : '');
-  const tc = document.querySelector('meta[name=theme-color]'); if (tc){ const bg = getComputedStyle(document.body).getPropertyValue(look === 'sky' ? '--sky' : /^lavender/.test(look) ? '--hbg' : '--bg').trim(); if (bg) tc.setAttribute('content', bg); }
-  if (brandLook) document.body.style.removeProperty('--accent'); else document.body.style.setProperty('--accent', /^(dark|papernight)$/.test(look) ? lighten(data.accent || '#50602B', .38) : (data.accent || '#50602B'));
+  return { look, brandLook, html: look + twin + (large ? ' large' : ''), body: look + twin + (brandLook ? ' paper' : '') + (large ? ' large' : '') };
+}
+/** Paint a look on the page; returns what to remember so the next open starts in it before anything loads. */
+function paintLook(c, accent, extra){
+  document.body.className = c.body + (extra || ''); document.documentElement.className = c.html;
+  let bgc = '';
+  const tc = document.querySelector('meta[name=theme-color]'); if (tc){ bgc = getComputedStyle(document.body).getPropertyValue(c.look === 'sky' ? '--sky' : /^lavender/.test(c.look) ? '--hbg' : '--bg').trim(); if (bgc) tc.setAttribute('content', bgc); }
+  const acc = c.brandLook ? '' : /^(dark|papernight)$/.test(c.look) ? lighten(accent || '#50602B', .38) : (accent || '#50602B');
+  if (acc) document.body.style.setProperty('--accent', acc); else document.body.style.removeProperty('--accent');
+  return JSON.stringify({ html: c.html, body: c.body, tc: bgc, accent: acc });
+}
+/** Before any data (loading, sign-in): the sheet's default look – from the sign-in info, or remembered from last time. */
+function paintDefault(info){
+  if (info && info.look){ save('dash-lookdef', paintLook(lookCls(info.look, info.lookMode), info.accent)); return; }
+  try { const s = JSON.parse(load('dash-lookdef') || 'null'); if (s){ document.body.className = s.body; document.documentElement.className = s.html; if (s.accent) document.body.style.setProperty('--accent', s.accent); else document.body.style.removeProperty('--accent'); } } catch (_) {}
+}
+function applyLook(){
+  const v = data.view || {}, want = (draft && draft.look) || v.look || data.look;
+  const mode = (draft && draft.mode) || v.mode || data.lookMode || '';   // the person's choice, else the sheet's Light or dark
+  const large = (draft ? draft.text : v.text) === 'large';
+  const mine = paintLook(lookCls(want, mode, large), data.accent, (ro() ? ' ro' : '') + (document.body.classList.contains('inchat') ? ' inchat' : ''));
+  if (!draft){ save('dash-lookme', mine); if (data.look) save('dash-lookdef', paintLookDry(lookCls(data.look, data.lookMode), data.accent)); }
   showLogo(data.logo);
   $('#tagline').textContent = data.tagline || '';
 }
+/** Same as paintLook, without touching the page (for remembering the default while someone uses their own look). */
+function paintLookDry(c, accent){ const acc = c.brandLook ? '' : /^(dark|papernight)$/.test(c.look) ? lighten(accent || '#50602B', .38) : (accent || '#50602B'); return JSON.stringify({ html: c.html, body: c.body, tc: '', accent: acc }); }
 /* ----- icon badge: unread messages as a number on the app icon (installed apps; iPhone needs notifications on) ----- */
 let lastBadge = -1;
 document.addEventListener('visibilitychange', () => { if (!document.hidden){ lastBadge = -1; try { syncBadge(); } catch (_) {} } });   // the notification handler may have counted up while the app was away
@@ -780,9 +809,8 @@ function showLogo(custom){
 function render(){
   syncBadge();
   const now = new Date();
-  if (!data && signInfo && signInfo.name){ const L = ['paper', 'light', 'dark', 'ivory', 'burgundy', 'sky', 'lavender'], lk = L.indexOf(signInfo.look) >= 0 ? signInfo.look : 'paper';
-    document.documentElement.className = lk; document.body.className = lk + (/ivory|burgundy|sky|lavender/.test(lk) ? ' paper' : ''); $('#brand').textContent = signInfo.name; document.title = signInfo.name;
-    showLogo(signInfo.logo); }
+  if (!data && !KEY) paintDefault(signInfo && signInfo.name ? signInfo : null);   // sign-in: the sheet's default look (loading keeps the person's own, set before the page drew)
+  if (!data && signInfo && signInfo.name){ $('#brand').textContent = signInfo.name; document.title = signInfo.name; $('#tagline').textContent = signInfo.tagline || ''; showLogo(signInfo.logo); }
   if (!data){ $('#nav').innerHTML = ''; $('#nav').hidden = true; $('#menubtn').hidden = true; $('#me').innerHTML = ''; $('#main').innerHTML = (lastErr === 'nokey' || lastErr === 'badkey' || lastErr === 'expired') ? viewUnlock() : lastErr ? viewProblem() : `<div class="empty">Loading…</div>`; return; }
   applyLook();
   $('#brand').textContent = data.name || 'Dashboard'; document.title = data.name || 'Dashboard';
@@ -822,7 +850,7 @@ document.addEventListener('click', ev => {
   const b = ev.target.closest('button, a[data-refresh]');
   if (!b || b.disabled) return;
   const d = b.dataset;
-  if ('signout' in d){ if (!confirm('Sign out on this device?')) return; liveEnd(); KEY = ''; save('dash-key', ''); try { localStorage.removeItem('dash-cache'); } catch(_){} data = null; lastErr = 'nokey'; render(); return; }
+  if ('signout' in d){ if (!confirm('Sign out on this device?')) return; liveEnd(); KEY = ''; save('dash-key', ''); try { localStorage.removeItem('dash-cache'); } catch(_){} data = null; lastErr = 'nokey'; signInfo = null; loadSignInfo(); render(); return; }
   if (d.tab || d.go) menuOpen = false;
   if (d.tab){ if (tab === 'view') draft = null; if (LIVE && chat.open && tab === 'chat' && d.tab !== 'chat') LIVE.send({ t: 'close' }); const back = d.tab === 'chat' && tab !== 'chat' && chat.open; tab = d.tab; if (back && LIVE) setTimeout(() => openChat(chat.open), 0); save('dash-tab', tab); window.scrollTo(0, 0); render(); return; }
   if (d.go){ if (d.go !== 'view') draft = null; tab = d.go; if (d.go !== 'view') save('dash-tab', tab); window.scrollTo(0, 0); render(); return; }
@@ -1429,7 +1457,7 @@ async function flush(){
   const failed = (got && got.results || []).filter(r => r.error);
   if (failed.length) toast("Couldn't save: " + failed[0].error.replace(/^(Error|Exception):\s*/, '') + (failed.length > 1 ? ` (+${failed.length - 1} more)` : ''));
   if (outbox.length){ scheduleFlush(50); return; }                               // more came in meanwhile: send them, then take Google's picture
-  if (got && got.me && got.order){ data = got; lastErr = null; save('dash-cache', JSON.stringify(data)); busy = {}; }
+  if (got && got.me && got.order){ data = mergeGot(data, got); lastErr = null; save('dash-cache', JSON.stringify(data)); busy = {}; }
   saveState = 'saved'; showSaving(); setTimeout(() => { if (saveState === 'saved'){ saveState = ''; showSaving(); } }, 1500);
   try { render(); } catch (_) {}
 }

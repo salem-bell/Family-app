@@ -335,6 +335,8 @@
 </style>
 </head>
 <body class="paper">
+<script>/* start in the right look before anything loads: the person's own if signed in, otherwise the sheet's default */
+try{var k=localStorage.getItem('dash-key'),s=JSON.parse((k&&localStorage.getItem('dash-lookme'))||localStorage.getItem('dash-lookdef')||'null');if(s&&s.body){document.body.className=s.body;document.documentElement.className=s.html;if(s.accent)document.body.style.setProperty('--accent',s.accent);var m=document.querySelector('meta[name=theme-color]');if(m&&s.tc)m.setAttribute('content',s.tc);}}catch(e){}</script>
 <header>
   <div class="top"><span class="brandwrap"><img class="logo" id="logo" alt="" hidden><span class="logo logomark" id="logomark" role="img" aria-label="Bellah family crest" hidden></span><span><span class="brand" id="brand">Dashboard</span><span class="tagline" id="tagline"></span></span></span><span class="me" id="me"></span></div>
   <div class="menurow"><button class="menubtn" id="menubtn" aria-haspopup="true" aria-expanded="false" aria-controls="nav" hidden><span class="bars">☰</span><span id="curtab">Today</span><span class="car">▾</span></button>

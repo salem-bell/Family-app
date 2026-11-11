@@ -7,7 +7,7 @@
  * Deploy > Manage deployments > pencil > New version > Deploy, then Dashboard > 1. Set up again.
  */
 
-const VERSION = '3.8';
+const VERSION = '3.9';
 const EDITIONS = ['Personal', 'Couple', 'Family'];
 const ROLES = ['Organizer', 'Member', 'Viewer'];
 const PALETTE = ['#2F6FB2', '#C2185B', '#2E7D32', '#EF6C00', '#6A1B9A', '#00838F', '#8D6E63', '#455A64'];
@@ -143,7 +143,8 @@ const SETTINGS = [
   ['Push service address',  ['', '', ''],                            'For phone notifications: the Cloudflare Worker address (https://….workers.dev). Blank = no notifications. The same Worker can serve several dashboards.'],
   ['Push service secret',   ['', '', ''],                            'Must match SECRET in that Worker. Don\'t share it.'],
   ['Push public key',       ['', '', ''],                            'Must match VAPID_PUBLIC in that Worker.'],
-  ['Look',                  ['Paper', 'Simple', 'Sky & navy'],                'The theme everyone starts with: Sky & navy, Lavender & gold, Ivory & burgundy, Paper or Simple. Each has a light and a dark version; each person picks theirs (and Light/Dark/Auto) in the app under My view.'],
+  ['Look',                  ['Paper', 'Simple', 'Sky & navy'],                'The theme everyone starts with – and what the sign-in and loading screens use: Sky & navy, Lavender & gold, Ivory & burgundy, Paper or Simple. Each person can still pick their own in the app under My view.'],
+  ['Light or dark',         ['Light', 'Light', 'Light'],                      'The default for that theme: Light, Dark, or Auto (follows each phone or computer). Each person can still change theirs under My view.'],
   ['Logo image link',       ['', ''],                                'Optional. A link to a small PNG or JPG (under 70 KB) shown at the top of the app. For a Google Drive file: Share › Anyone with the link, then paste the link here.'],
   ['Tagline',               ['', ''],                                'Optional. A short line under the name, like a date or a motto.'],
   ['Accent color',          ['#50602B', '#2F6FB2'],                  'Any color code, like #2F6FB2.'],
@@ -216,7 +217,7 @@ function buildSettings_(ss, ed) {
   });
   const vals = sh.getDataRange().getValues();
   const rule = (label, list) => { const r = vals.findIndex(x => x[0] === label) + 1; if (r) sh.getRange(r, 2).setDataValidation(SpreadsheetApp.newDataValidation().requireValueInList(list, true).build()); };
-  rule('Edition', EDITIONS); rule('Look', ['Sky & navy', 'Lavender & gold', 'Ivory & burgundy', 'Paper', 'Simple']); rule('Sign in with', ['Link', 'Link or name + code', 'Name + code only']); rule('Monthly budget shows', ['Dollars', 'Status']);
+  rule('Edition', EDITIONS); rule('Look', ['Sky & navy', 'Lavender & gold', 'Ivory & burgundy', 'Paper', 'Simple']); rule('Light or dark', ['Light', 'Dark', 'Auto']); rule('Sign in with', ['Link', 'Link or name + code', 'Name + code only']); rule('Monthly budget shows', ['Dollars', 'Status']);
   ['Google Calendar', 'Calendar subscriptions', 'Add to calendar buttons'].forEach(l => rule(l, ['On', 'Off']));
   header_(sh, 3);
   sh.setColumnWidth(1, 190); sh.setColumnWidth(2, 300); sh.setColumnWidth(3, 560);
@@ -517,24 +518,52 @@ function api(key, p) {
   }
   if (results || p.action) dataDirty_();              // fast loading: everyone's copy is refreshed within a minute
   memoReset_(true);                                  // the read below can reuse each tab it has already read
-  try { const out = state_(ss, me); if (results) out.results = results; return out; } finally { memoReset_(false); }
+  try { const out = state_(ss, me, p.have); if (results) out.results = results; return out; } finally { memoReset_(false); }
 }
 
 /* ============================================================
    Reading
    ============================================================ */
-function state_(ss, me) {
+/* Only what changed. Every save in the app and every edit in the sheet marks the data changed (dataDirty_). The phone sends
+   back the version it holds ("have"): when nothing has changed since (same day, same 15 minutes – which also catches
+   Google Calendar edits), none of the sections are built and the reply says "same: *". When something has, everything is
+   built but only sections whose content differs from the phone's copy are sent; the rest are listed under "same". */
+const CORE_ = ['version', 'edition', 'name', 'me', 'lists', 'look', 'lookMode', 'accent', 'budgetShows', 'logo', 'tagline', 'today', 'features', 'sheet', 'updated', 'errors', 'edge', 'people', 'order', 'view', 'signin', 'meId', 'active', 'push', 'phoneApp', 'ver', 'h', 'same'];
+function dataVer_(me, today) { return [VERSION, me.name, me.role, today, Math.floor(Date.now() / 9e5), CacheService.getScriptCache().get('DATA_DIRTY') || '0'].join('|'); }
+function state_(ss, me, have) {
+  const tz0 = ss.getSpreadsheetTimeZone(), ver = dataVer_(me, Utilities.formatDate(new Date(), tz0, 'yyyy-MM-dd'));
+  have = have && typeof have === 'object' ? have : {};
+  const quick = have.ver === ver;                    // nothing changed since this phone's copy: skip building the sections
+  const out = state0_(ss, me, quick);
+  out.ver = ver;
+  if (quick) { out.same = '*'; out.h = have.h || {}; return out; }
+  const h = {}, same = [], hv = have.h || {};
+  Object.keys(out).forEach(k => {
+    if (CORE_.indexOf(k) >= 0 || out[k] === undefined) return;
+    h[k] = Utilities.base64Encode(Utilities.computeDigest(Utilities.DigestAlgorithm.MD5, JSON.stringify(out[k]), Utilities.Charset.UTF_8)).slice(0, 16);
+    if (hv[k] === h[k]) { delete out[k]; same.push(k); }
+  });
+  out.h = h; out.same = same;
+  return out;
+}
+function state0_(ss, me, coreOnly) {
   const tz = ss.getSpreadsheetTimeZone(), cfg = config_(ss), on = cfg.features, errors = [];
   if (on['Messages'] && !me.id) { try { me = chatMe_(ss, me); memoReset_(true); } catch (e) { errors.push('Messages: ' + e.message); } }   // gives anyone new a chat ID
   const today = Utilities.formatDate(new Date(), tz, 'yyyy-MM-dd');
   const out = {
-    version: VERSION, edition: cfg.edition, name: cfg.name, me, lists: cfg.lists, look: cfg.look, accent: cfg.accent,
+    version: VERSION, edition: cfg.edition, name: cfg.name, me, lists: cfg.lists, look: cfg.look, lookMode: cfg.lookMode, accent: cfg.accent,
     budgetShows: cfg.budgetShows, logo: logo_(ss), tagline: setting_(ss, 'Tagline').slice(0, 120), today, features: on, sheet: me.role === 'Organizer' ? ss.getUrl() : '', updated: new Date().toISOString(), errors,
     edge: dataLive_(ss) ? setting_(ss, 'Data service address').replace(/\/+$/, '') : '',
     people: rows_(ss, 'People').filter(r => r[0] && truthy_(r[7])).map(r => ({ name: String(r[0]), household: String(r[1] || ''), color: String(r[3] || ''), id: String(r[9] || ''), role: String(r[2] || 'Member') })),
     order: FEATURES.map(f => [f[0], f[1]]),
     view: view_(ss, me.name), signin: codeSignIn_(ss),
   };
+  if (coreOnly) {                                     // the phone's sections are current: just the small, always-fresh parts
+    if (on['Messages'] && me.id) { try { out.meId = me.id; out.active = activeMap_(ss, me); } catch (e) {} }
+    out.push = pushInfo_(ss, me);
+    out.phoneApp = /^https:\/\//.test(setting_(ss, 'Phone app address')) ? setting_(ss, 'Phone app address') : '';
+    return out;
+  }
   const run = (name, fn) => { if (!on[name]) return undefined; try { return fn(); } catch (e) { errors.push(name + ': ' + e.message); return null; } };
   out.events    = run('Calendar', () => events_(ss, cfg, tz, on['Week ahead'] ? Math.max(cfg.days, 8) : cfg.days, errors));
   if (!out.events && on['Week ahead']) { try { out.events = events_(ss, cfg, tz, 8, errors); } catch (e) { errors.push('Week ahead: ' + e.message); } }
@@ -591,6 +620,7 @@ function config0_(ss) {
     keyword: setting_(ss, 'Date night keyword') || 'date night',
     budgetShows: /status/i.test(setting_(ss, 'Monthly budget shows')) ? 'status' : 'dollars',
     look: lookOf_(setting_(ss, 'Look')),
+    lookMode: /dark/i.test(setting_(ss, 'Light or dark')) ? 'dark' : /auto/i.test(setting_(ss, 'Light or dark')) ? 'auto' : 'light',
     accent: /^#[0-9a-f]{3,8}$/i.test(setting_(ss, 'Accent color')) ? setting_(ss, 'Accent color') : '#50602B',
     features,
   };
@@ -1052,7 +1082,7 @@ function sessionSig_(r, issued) {
 /** Public: what the sign-in screen needs before anyone is signed in. Reveals nothing about people. */
 function signInInfo() {
   const ss = SpreadsheetApp.getActive(), cfg = config_(ss);
-  return { code: codeSignIn_(ss), codeOnly: codeOnly_(ss), name: cfg.name, look: cfg.look, logo: logo_(ss), version: VERSION };
+  return { code: codeSignIn_(ss), codeOnly: codeOnly_(ss), name: cfg.name, look: cfg.look, lookMode: cfg.lookMode, accent: cfg.accent, tagline: setting_(ss, 'Tagline').slice(0, 120), logo: logo_(ss), version: VERSION };
 }
 
 /** Public: first name + 4-digit code → that person's key. 5 wrong tries locks that name for 15 minutes; 25 wrong tries in an hour locks code sign-in for everyone for an hour. */
