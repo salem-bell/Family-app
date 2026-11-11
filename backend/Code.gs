@@ -7,7 +7,7 @@
  * Deploy > Manage deployments > pencil > New version > Deploy, then Dashboard > 1. Set up again.
  */
 
-const VERSION = '3.9';
+const VERSION = '3.91';   // the app compares this as a number, so never 3.10
 const EDITIONS = ['Personal', 'Couple', 'Family'];
 const ROLES = ['Organizer', 'Member', 'Viewer'];
 const PALETTE = ['#2F6FB2', '#C2185B', '#2E7D32', '#EF6C00', '#6A1B9A', '#00838F', '#8D6E63', '#455A64'];
@@ -134,6 +134,7 @@ const SETTINGS = [
   ['Regions',               ['', '', 'Texas, Colorado, Out of state'], 'Family edition: the region tags for the Marketplace, separated by commas (cities, states, or "Online").'],
   ['Sign in with',          ['Link', 'Link', 'Name + code only'],  'Link: each person opens their own private link. Link or name + code: private links work, and anyone can also open the plain app address and sign in with their first name and 4-digit code (People tab › Sign-in code). Name + code only: one shared address for everyone; private links stop working.'],
   ['Ask for the code again every', ['60', '60', '60'],             'Days before a signed-in device asks for the name and code again (0 = never). Only applies to sign-in with a code.'],
+  ['Organizers sign in again every', ['7', '7', '7'],              'Days before an organizer\'s device asks for the name and code again (shorter, because an organizer\'s sign-in can change everything). 0 = same as everyone.'],
   ['Phone app address',     ['', '', ''],                            'Optional. The address of the installable phone app (e.g. https://you.github.io/Family-App/). Shown in "Get app links" so people install that one.'],
   ['Delete chat photos after (days)', ['60', '60', '60'],          'Photos sent in Messages are kept in a private Drive folder and deleted after this many days.'],
   ['Chat service address',  ['', '', ''],                            'Live Messages (the Cloudflare team-chat Worker), e.g. https://team-chat….workers.dev. Blank = Messages run on this sheet (slower; messages saved in the Messages tab).'],
@@ -472,8 +473,8 @@ function whoIs_(ss, key) {
     const [, who, issued, sig] = String(key).split('.');
     r = rows_(ss, 'People').find(x => x[0] && x[5] && feedToken_(String(x[5])) === who);
     if (!r || !truthy_(r[7]) || !codeSignIn_(ss) || sessionSig_(r, issued) !== sig) return null;
-    const days = sessionDays_(ss);
-    if (days && Date.now() - Number(issued) > days * 864e5) throw new Error('expired: it has been ' + days + ' days – sign in again');
+    const days = sessionDays_(ss, String(r[2]));
+    if (days && Date.now() - Number(issued) > days * 864e5) throw new Error('expired: it has been ' + days + (days === 1 ? ' day' : ' days') + ' – sign in again');
   } else {                                          // a private link
     if (codeOnly_(ss)) return null;
     r = rows_(ss, 'People').find(x => x[0] && String(x[5]) === String(key));
@@ -1071,7 +1072,12 @@ function act_(ss, p, me) {
    ============================================================ */
 function codeSignIn_(ss) { return /code/i.test(setting_(ss, 'Sign in with')); }
 function codeOnly_(ss) { return /only/i.test(setting_(ss, 'Sign in with')) && codeSignIn_(ss); }
-function sessionDays_(ss) { const v = setting_(ss, 'Ask for the code again every'); const n = Number(String(v).replace(/[^\d.]/g, '')); return v === '' ? 60 : (isNaN(n) ? 60 : Math.max(0, Math.min(3650, n))); }
+function sessionDays_(ss, role) {
+  const v = setting_(ss, 'Ask for the code again every'), n = Number(String(v).replace(/[^\d.]/g, '')), all = v === '' ? 60 : (isNaN(n) ? 60 : Math.max(0, Math.min(3650, n)));
+  if (role !== 'Organizer') return all;
+  const o = setting_(ss, 'Organizers sign in again every'), m = o === '' ? 7 : Math.max(0, Math.min(3650, Number(String(o).replace(/[^\d.]/g, '')) || 0));   // organizers: shorter (default 7 days)
+  return !m ? all : all > 0 ? Math.min(all, m) : m;
+}
 /** Signed with the person's key and code: a new link or a new code for that person signs their devices out. */
 function sessionSig_(r, issued) {
   const props = PropertiesService.getScriptProperties();
@@ -2375,7 +2381,7 @@ function pushData_(force) {
     const old = full ? {} : JSON.parse(c.get('DATA_H') || '{}'), hashes = {}, states = {}, roster = [];
     people.forEach(r => {
       const feed = feedToken_(String(r[5])), id = String(r[9] || '') || 'f_' + feed;
-      if (code) roster.push({ id, match: 'S.' + feed, pre: 'session|' + r[5] + '|' + String(r[8]).trim() + '|', days });   // what sessionSig_() signs before the issue time
+      if (code) roster.push({ id, match: 'S.' + feed, pre: 'session|' + r[5] + '|' + String(r[8]).trim() + '|', days: sessionDays_(ss, String(r[2])) });   // what sessionSig_() signs before the issue time
       if (linksOk) roster.push({ id, match: 'L.' + hex_(Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, String(r[5]), Utilities.Charset.UTF_8)) });
       const me = { name: String(r[0]), household: String(r[1] || ''), role: ROLES.indexOf(String(r[2])) >= 0 ? String(r[2]) : 'Member', feed, id: String(r[9] || '') };
       try {
