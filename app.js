@@ -811,7 +811,7 @@ function render(){
   const now = new Date();
   if (!data && !KEY) paintDefault(signInfo && signInfo.name ? signInfo : null);   // sign-in: the sheet's default look (loading keeps the person's own, set before the page drew)
   if (!data && signInfo && signInfo.name){ $('#brand').textContent = signInfo.name; document.title = signInfo.name; $('#tagline').textContent = signInfo.tagline || ''; showLogo(signInfo.logo); }
-  if (!data){ $('#nav').innerHTML = ''; $('#nav').hidden = true; $('#menubtn').hidden = true; $('#me').innerHTML = ''; $('#main').innerHTML = (lastErr === 'nokey' || lastErr === 'badkey' || lastErr === 'expired') ? viewUnlock() : lastErr ? viewProblem() : `<div class="empty">Loading…</div>`; return; }
+  if (!data){ $('#nav').innerHTML = ''; $('#nav').hidden = true; $('#menubtn').hidden = true; $('#me').innerHTML = ''; $('#foot').innerHTML = ''; /* nothing (like Open sheet) under the sign-in or loading screen */ $('#main').innerHTML = (lastErr === 'nokey' || lastErr === 'badkey' || lastErr === 'expired') ? viewUnlock() : lastErr ? viewProblem() : `<div class="empty">Loading…</div>`; return; }
   applyLook();
   $('#brand').textContent = data.name || 'Dashboard'; document.title = data.name || 'Dashboard';
   $('#me').innerHTML = `<span>${whoChip(data.me.name)}${ro() ? ' <span class="tag">View only</span>' : ''}</span><button data-go="view">My view</button>${data.signin ? '<button data-signout>Sign out</button>' : ''}`;
