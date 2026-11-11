@@ -764,6 +764,7 @@ function applyLook(){
 }
 /* ----- icon badge: unread messages as a number on the app icon (installed apps; iPhone needs notifications on) ----- */
 let lastBadge = -1;
+document.addEventListener('visibilitychange', () => { if (!document.hidden){ lastBadge = -1; try { syncBadge(); } catch (_) {} } });   // the notification handler may have counted up while the app was away
 function syncBadge(){
   const n = data && data.channels ? data.channels.reduce((a, c) => a + (Number(c.unread) || 0), 0) : 0;
   if (n === lastBadge) return; lastBadge = n;
