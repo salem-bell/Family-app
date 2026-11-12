@@ -1351,14 +1351,23 @@ const deviceName = () => { const ua = navigator.userAgent; return (/iphone/i.tes
 const b64u8 = b => { b = String(b).replace(/-/g, '+').replace(/_/g, '/'); while (b.length % 4) b += '='; return Uint8Array.from(atob(b), c => c.charCodeAt(0)); };
 let pushSub = null, pushChecked = false;
 const pushOn = () => !!(pushSub && pushOK() && Notification.permission === 'granted');
-async function pushCheck(){
-  if (pushChecked || !pushOK() || !data || !data.push) return; pushChecked = true;
+/* Is this device subscribed? Asked of the app's background worker once it's running (navigator.serviceWorker.ready) –
+   asking too early (before the worker has started, which fast loading made common) found nothing and showed Off for good.
+   Re-checked whenever the app comes back to the screen and when Settings/Notifications open. */
+let pushAt = 0;
+async function pushCheck(force){
+  if (!pushOK() || !data || !data.push || pushChecked === 'busy') return;
+  if (!force && pushChecked && Date.now() - pushAt < 5000) return;
+  pushChecked = 'busy';
   try {
-    const reg = await navigator.serviceWorker.getRegistration(); pushSub = reg ? await reg.pushManager.getSubscription() : null;
+    const reg = await Promise.race([navigator.serviceWorker.ready, new Promise(r => setTimeout(() => r(null), 10000))]);
+    if (!reg){ pushChecked = false; return; }                      // worker still not running: try again next time
+    const was = !!pushSub; pushSub = await reg.pushManager.getSubscription(); pushChecked = true; pushAt = Date.now();
     if (pushSub && data.push.ready && Notification.permission === 'granted' && (data.push.devices || []).indexOf(pushSub.endpoint) < 0) act('pushSub', { sub: JSON.stringify(pushSub), device: deviceName() });
-    if (tab === 'view' || tab === 'chat') render();
-  } catch (_) {}
+    if (was !== !!pushSub) render();
+  } catch (_) { pushChecked = false; }
 }
+document.addEventListener('visibilitychange', () => { if (!document.hidden) pushCheck(true); });
 async function pushTurnOn(){
   if (!pushOK()){ toast('This browser can\'t get notifications'); return; }
   const perm = await Notification.requestPermission();   // first thing in the tap, so the browser allows the prompt
@@ -1390,6 +1399,7 @@ function privacyCard(){
   return card('Privacy', `<div class="row" style="align-items:center"><span class="txt">Show when I'm active<div class="muted sm">Others see "Active now" or "Active 20 min ago" next to your name in Messages.</div></span><button class="chk ${on ? 'on' : ''}" data-pushactive="${on ? 0 : 1}" style="pointer-events:auto;opacity:1" aria-label="Show when I'm active">${on ? '✓' : ''}</button></div>`);
 }
 function notifCard(){
+  pushCheck();                                      // re-check this device whenever the card shows
   const P = data.push || {}, pr = P.prefs || {}, on = pushOn();
   if (!P.ready) return privacyCard();
   let top;

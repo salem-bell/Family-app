@@ -1,6 +1,6 @@
 // Keeps the app shell on the phone so it opens instantly and works offline.
 // Bump VERSION whenever app files change so phones pick up the new version.
-const VERSION = 'fam-3.7.1';
+const VERSION = 'fam-3.7.2';
 const SHELL = ['./', 'index.html', 'app.js', 'config.js', 'manifest.webmanifest', 'icons/icon-192.png', 'icons/icon-512.png', 'icons/apple-touch-icon.png', 'brand/bellah-crest.png', 'map.js'];
 
 self.addEventListener('install', e => {
