@@ -76,6 +76,17 @@
   .top{display:flex;align-items:center;justify-content:space-between;gap:12px}
   .brand{font-family:var(--head);font-size:1.45em;font-weight:700}
   .me{font-family:var(--label);font-size:.85em;display:flex;gap:10px;align-items:center}
+  .topr{display:flex;align-items:center;gap:10px;flex:none}
+  .rbtn{all:unset;cursor:pointer;width:34px;height:34px;border-radius:50%;display:grid;place-items:center;font-size:1.25rem;color:inherit;flex:none}
+  .rbtn:focus-visible{outline:2px solid currentColor} .rbtn span{display:inline-block} .rbtn.spin span{animation:rspin .8s linear infinite} .rbtn.spin{pointer-events:none}
+  @keyframes rspin{to{transform:rotate(360deg)}}
+  html,body{overscroll-behavior-y:contain}
+  #ptr{position:fixed;left:50%;top:calc(env(safe-area-inset-top,0px) + var(--hh,60px) + 14px);z-index:30;width:40px;height:40px;margin-top:-40px;border-radius:50%;display:grid;place-items:center;
+    background:var(--card);color:var(--accent,currentColor);box-shadow:0 2px 10px rgba(0,0,0,.18);font-size:1.25rem;opacity:0;transform:translate(-50%,0);pointer-events:none;transition:opacity .15s, transform .25s ease-out}
+  #ptr.go span{display:inline-block;animation:rspin .8s linear infinite}
+  .cpin{font-size:.72rem;margin-left:4px;flex:none;opacity:.85}
+  .chatbar .pinbtn{flex:none;font-size:1.05rem;filter:grayscale(1);opacity:.45} .chatbar .pinbtn.on{filter:none;opacity:1}
+  .ackp .thumb{font-style:normal;font-size:.85rem;line-height:1}
   .me button{all:unset;cursor:pointer;text-decoration:underline}
   nav .n{display:inline-block;min-width:18px;margin-left:5px;padding:0 4px;border-radius:2px;background:var(--accent);color:#fff;font-size:.72em;text-align:center;font-weight:700}
   nav .n.warn{background:var(--warn)}
@@ -338,7 +349,7 @@
 <script>/* start in the right look before anything loads: the person's own if signed in, otherwise the sheet's default */
 try{var k=localStorage.getItem('dash-key'),s=JSON.parse((k&&localStorage.getItem('dash-lookme'))||localStorage.getItem('dash-lookdef')||'null');if(s&&s.body){document.body.className=s.body;document.documentElement.className=s.html;if(s.accent)document.body.style.setProperty('--accent',s.accent);var m=document.querySelector('meta[name=theme-color]');if(m&&s.tc)m.setAttribute('content',s.tc);}}catch(e){}</script>
 <header>
-  <div class="top"><span class="brandwrap"><img class="logo" id="logo" alt="" hidden><span class="logo logomark" id="logomark" role="img" aria-label="Bellah family crest" hidden></span><span><span class="brand" id="brand">Dashboard</span><span class="tagline" id="tagline"></span></span></span><span class="me" id="me"></span></div>
+  <div class="top"><span class="brandwrap"><img class="logo" id="logo" alt="" hidden><span class="logo logomark" id="logomark" role="img" aria-label="Bellah family crest" hidden></span><span><span class="brand" id="brand">Dashboard</span><span class="tagline" id="tagline"></span></span></span><span class="topr"><button class="rbtn" id="refresh" data-refresh aria-label="Refresh" title="Refresh" hidden><span>↻</span></button><span class="me" id="me"></span></span></div>
   <div class="menurow"><button class="menubtn" id="menubtn" aria-haspopup="true" aria-expanded="false" aria-controls="nav" hidden><span class="bars">☰</span><span id="curtab">Today</span><span class="car">▾</span></button>
     <nav id="nav" class="menu" aria-label="Sections" hidden></nav></div>
 </header>

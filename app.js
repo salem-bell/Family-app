@@ -30,7 +30,7 @@ async function post(fn, args, retried){
   }
   finally { clearTimeout(t); INFLIGHT.delete(rec); }
 }
-function unstick(){ const now = Date.now(); INFLIGHT.forEach(r => { if (now - r.at > (r.read ? 4000 : 15000)) r.ctl.abort(); }); }
+function unstick(){ const now = Date.now(); INFLIGHT.forEach(r => { if (r.read && now - r.at > 4000) r.ctl.abort(); }); }   // never cut off a save – it may already have gone through
 /* Fast loading (phone app only): the sheet keeps a ready-made copy of everyone's data on Cloudflare (data.edge), refreshed
    within a minute of any change. Loads come from there; saves always go to the sheet. After you save, a copy older than your
    save is ignored, so your own change never seems to vanish. No copy, too old, can't reach it – the app asks the sheet as before. */
@@ -166,7 +166,8 @@ async function refresh(p, o){
   const isAct = !!(p && p.action), seq = ++seqStarted;
   if (isAct){ pendingActs++; lastActSeq = seq; }
   let got = null, err = null;
-  try { got = (!isAct && !(o && o.fresh) && await edgeLoad()) || await call(p || {}); } catch (e) { err = e; }
+  try { got = (!isAct && !(o && o.fresh) && await edgeLoad()) || (o && o.edgeOnly ? null : await call(p || {})); } catch (e) { err = e; }
+  if (!got && !err && o && o.edgeOnly){ if (isAct) pendingActs--; return null; }
   if (got && got.edge !== undefined && got.edge !== EDGE){ EDGE = got.edge; save('dash-edge', EDGE); }
   if (isAct && got && !err) wrote(got);
   if (isAct) pendingActs--;
@@ -195,6 +196,39 @@ async function refresh(p, o){
   busy = {};
   try { render(); } catch (e) { data = null; lastErr = 'mismatch'; lastMsg = 'The page could not show this data: ' + (e && e.message || e); render(); }
 }
+
+/* Refresh by hand (the ↻ button, the footer link, or pulling down): show the Cloudflare copy straight away – it's at most
+   a minute old – then check with the sheet itself. The button spins until the sheet has answered. */
+let refreshing = null;
+function manualRefresh(){
+  if (refreshing) return refreshing;
+  const btn = $('#refresh'); if (btn) btn.classList.add('spin');
+  refreshing = (async () => { try { await refresh(undefined, { edgeOnly: true }); } catch (_) {} await refresh(undefined, { fresh: true }); })()
+    .finally(() => { refreshing = null; const b2 = $('#refresh'); if (b2) b2.classList.remove('spin'); ptrDone(); });
+  return refreshing;
+}
+const PTR = { y0: 0, dy: 0, on: false, el: null };
+function ptrEl(){ if (!PTR.el){ PTR.el = document.createElement('div'); PTR.el.id = 'ptr'; PTR.el.innerHTML = '<span>↻</span>'; document.body.appendChild(PTR.el); } return PTR.el; }
+function ptrDone(){ const el = PTR.el; if (!el) return; el.classList.remove('go'); el.style.transform = ''; el.style.opacity = ''; el.style.transition = ''; }
+document.addEventListener('touchstart', e => {
+  PTR.on = false; if (e.touches.length !== 1 || !KEY || !data || refreshing || menuOpen) return;
+  if (window.scrollY > 0 || (tab === 'chat' && chat.open) || tab === 'games' || ($('#csheet') && $('#csheet').innerHTML.trim())) return;
+  const t = e.target; if (t.closest && t.closest('input,textarea,select,[contenteditable],.msgs,.map,canvas,.sheet,[role=dialog]')) return;
+  PTR.on = true; PTR.y0 = e.touches[0].clientY; PTR.dy = 0;
+}, { passive: true });
+document.addEventListener('touchmove', e => {
+  if (!PTR.on) return;
+  PTR.dy = e.touches[0].clientY - PTR.y0; if (window.scrollY > 0) { PTR.on = false; ptrDone(); return; }
+  if (PTR.dy <= 0) { ptrDone(); return; }
+  const pull = Math.min(110, PTR.dy * 0.5), el = ptrEl(); el.style.transition = 'none';
+  el.style.opacity = String(Math.min(1, pull / 60)); el.style.transform = `translate(-50%, ${pull}px) rotate(${pull * 4}deg)`;
+}, { passive: true });
+document.addEventListener('touchend', () => {
+  if (!PTR.on) return; PTR.on = false;
+  const el = PTR.el; if (!el) return; el.style.transition = '';
+  if (Math.min(110, PTR.dy * 0.5) >= 60){ el.classList.add('go'); el.style.transform = 'translate(-50%, 60px)'; if (navigator.vibrate) try { navigator.vibrate(10); } catch (_) {} manualRefresh(); }
+  else ptrDone();
+}, { passive: true });
 
 /* =========================================================
    Helpers
@@ -811,8 +845,8 @@ function render(){
   const now = new Date();
   if (!data && !KEY) paintDefault(signInfo && signInfo.name ? signInfo : null);   // sign-in: the sheet's default look (loading keeps the person's own, set before the page drew)
   if (!data && signInfo && signInfo.name){ $('#brand').textContent = signInfo.name; document.title = signInfo.name; $('#tagline').textContent = signInfo.tagline || ''; showLogo(signInfo.logo); }
-  if (!data){ $('#nav').innerHTML = ''; $('#nav').hidden = true; $('#menubtn').hidden = true; $('#me').innerHTML = ''; $('#foot').innerHTML = ''; /* nothing (like Open sheet) under the sign-in or loading screen */ $('#main').innerHTML = (lastErr === 'nokey' || lastErr === 'badkey' || lastErr === 'expired') ? viewUnlock() : lastErr ? viewProblem() : `<div class="empty">Loading…</div>`; return; }
-  applyLook();
+  if (!data){ $('#refresh').hidden = true; $('#nav').innerHTML = ''; $('#nav').hidden = true; $('#menubtn').hidden = true; $('#me').innerHTML = ''; $('#foot').innerHTML = ''; /* nothing (like Open sheet) under the sign-in or loading screen */ $('#main').innerHTML = (lastErr === 'nokey' || lastErr === 'badkey' || lastErr === 'expired') ? viewUnlock() : lastErr ? viewProblem() : `<div class="empty">Loading…</div>`; return; }
+  applyLook(); $('#refresh').hidden = false;
   $('#brand').textContent = data.name || 'Dashboard'; document.title = data.name || 'Dashboard';
   $('#me').innerHTML = `<span>${whoChip(data.me.name)}${ro() ? ' <span class="tag">View only</span>' : ''}</span><button data-go="view">My view</button>${data.signin ? '<button data-signout>Sign out</button>' : ''}`;
   const feats = myFeatures(), tabs = [['today', 'Today']].concat(feats.map(f => [tabOf(f), TABNAME[tabOf(f)] || f]).filter(x => x[0]));
@@ -854,7 +888,7 @@ document.addEventListener('click', ev => {
   if (d.tab || d.go) menuOpen = false;
   if (d.tab){ if (tab === 'view') draft = null; if (LIVE && chat.open && tab === 'chat' && d.tab !== 'chat') LIVE.send({ t: 'close' }); const back = d.tab === 'chat' && tab !== 'chat' && chat.open; tab = d.tab; if (back && LIVE) setTimeout(() => openChat(chat.open), 0); save('dash-tab', tab); window.scrollTo(0, 0); render(); return; }
   if (d.go){ if (d.go !== 'view') draft = null; tab = d.go; if (d.go !== 'view') save('dash-tab', tab); window.scrollTo(0, 0); render(); return; }
-  if (b.hasAttribute('data-refresh')){ ev.preventDefault(); refresh(undefined, { fresh: true }); return; }   // the refresh button always asks the sheet itself
+  if (b.hasAttribute('data-refresh')){ ev.preventDefault(); manualRefresh(); return; }
   if ('dismiss' in d){ const v = data.view || {}; data.view = Object.assign({}, v, { features: myFeatures(), seen: enabledFeatures() }); render(); act('saveView', { features: JSON.stringify(myFeatures()), look: v.look || '', text: v.text || '', seen: JSON.stringify(enabledFeatures()) }); return; }
   if ('mine' in d){ mineOnly = d.mine === '1'; save('dash-mine', mineOnly ? '1' : '0'); render(); return; }
   if (d.expand){ expanded[d.expand] = !expanded[d.expand]; render(); return; }
@@ -1037,12 +1071,14 @@ function fmtMsg(text){
 function curChat(){ return (data.channels || []).find(x => x.id === chat.open); }
 const canEditChat = () => { const c = curChat(); return !!c && !ro() && (c.kind === 'group' || (c.kind === 'channel' && isOrg())); };
 
+const myPins = () => (data && data.view && Array.isArray(data.view.pins)) ? data.view.pins : [];
 function viewChat(){
   if (chat.open) return viewConversation();
-  const ch = (data.channels || []).slice();
+  const pins = myPins(), pinAt = c => pins.indexOf(c.id);
+  const ch = (data.channels || []).slice().map((c, i) => [c, i]).sort((a, b) => (pinAt(a[0]) < 0) - (pinAt(b[0]) < 0) || (pinAt(a[0]) >= 0 && pinAt(b[0]) >= 0 ? pinAt(a[0]) - pinAt(b[0]) : a[1] - b[1])).map(x => x[0]);
   const row = c => { const l = c.last, mine = l && l.from === data.me.name;
     const pre = !l ? (c.kind === 'group' ? esc(c.members.join(', ')) : 'No messages yet') : (mine ? 'You: ' : c.kind === 'dm' ? '' : esc(first(l.from)) + ': ') + esc(l.text);
-    return `<button class="crow ${c.unread ? 'unread' : ''}" data-openchat="${esc(c.id)}">${avatar(c)}<span class="cbody"><span class="ctop"><b>${esc(c.name)}</b><span class="cwhen">${l ? shortWhen(l.at) : ''}</span></span><span class="cbot"><span class="cpre">${pre}</span>${c.unread ? `<span class="cn">${c.unread > 99 ? '99+' : c.unread}</span>` : ''}</span></span></button>`; };
+    return `<button class="crow ${c.unread ? 'unread' : ''}" data-openchat="${esc(c.id)}">${avatar(c)}<span class="cbody"><span class="ctop"><b>${esc(c.name)}</b>${pinAt(c) >= 0 ? '<span class="cpin" aria-label="Pinned">📌</span>' : ''}<span class="cwhen">${l ? shortWhen(l.at) : ''}</span></span><span class="cbot"><span class="cpre">${pre}</span>${c.unread ? `<span class="cn">${c.unread > 99 ? '99+' : c.unread}</span>` : ''}</span></span></button>`; };
   const q = chat.q || '', qq = esc(q.trim()), searching = q.trim().length >= 2;
   const hl = t => { const h = esc(t), i = h.toLowerCase().indexOf(qq.toLowerCase()); return i < 0 ? h : h.slice(0, i) + '<mark>' + h.slice(i, i + qq.length) + '</mark>' + h.slice(i + qq.length); };
   const res = r => `<button class="crow" data-openfind="${esc(r.channel)}|${esc(r.id)}">${avatar({ id: r.channel, name: r.name, kind: r.kind })}<span class="cbody"><span class="ctop"><b>${esc(r.name)}</b><span class="cwhen">${shortWhen(r.at)}</span></span><span class="cpre wrap"><span class="muted">${esc(first(r.from))}:</span> ${hl(r.text)}</span></span></button>`;
@@ -1065,9 +1101,9 @@ function viewConversation(){
     const lastR = !next || nextSep || next.fromId !== m.fromId || gap(m, next) > 5;
     const pic = m.photo ? picTag(m) : m.expired ? '<div class="msg exp"><i>Photo expired</i></div>' : '';
     const real = m.id !== 'tmp', acks = m.acks || [];
-    const meta = chat.meta === m.id ? `<div class="meta ${mine ? 'own' : ''}">${timeOf(m.at)}${real && !ro() ? ` · <button class="lnk" data-creply="${esc(m.id)}">Reply</button>` : ''}${real && !mine && !ro() ? ` · <button class="lnk" data-cack="${esc(m.id)}">${m.ackMine ? 'Unmark read' : 'Mark read'}</button>` : ''}${real && (mine || isOrg()) && !ro() ? ` · <button class="lnk" data-cdel="${esc(m.id)}">Delete</button>` : ''}</div>` : '';
+    const meta = chat.meta === m.id ? `<div class="meta ${mine ? 'own' : ''}">${timeOf(m.at)}${real && !ro() ? ` · <button class="lnk" data-creply="${esc(m.id)}">Reply</button>` : ''}${m.text ? ` · <button class="lnk" data-copymsg="${esc(m.id)}">Copy</button>` : ''}${real && !mine && !ro() ? ` · <button class="lnk" data-cack="${esc(m.id)}">${m.ackMine ? 'Remove 👍' : '👍'}</button>` : ''}${real && (mine || isOrg()) && !ro() ? ` · <button class="lnk" data-cdel="${esc(m.id)}">Delete</button>` : ''}</div>` : '';
     const quote = m.reply ? `<button type="button" class="quote" data-cjump="${esc(m.reply.id)}"><b>${esc(m.reply.from ? (m.reply.from === data.me.name ? 'You' : first(m.reply.from)) : '')}</b><span>${m.reply.photo && !m.reply.text ? '📷 Photo' : esc(m.reply.text)}</span></button>` : '';
-    const ackPill = acks.length ? `<div class="ackrow ${mine ? 'own' : ''}"><button class="ackp ${m.ackMine ? 'mine' : ''}" data-cacks="${esc(m.id)}" aria-label="Read by ${esc(acks.join(', '))}">${SVG_READ}${acks.length > 1 ? `<span>${acks.length}</span>` : ''}</button></div>` : '';
+    const ackPill = acks.length ? `<div class="ackrow ${mine ? 'own' : ''}"><button class="ackp ${m.ackMine ? 'mine' : ''}" data-cacks="${esc(m.id)}" aria-label="👍 from ${esc(acks.join(', '))}"><i class="thumb">👍</i>${acks.length > 1 ? `<span>${acks.length}</span>` : ''}</button></div>` : '';
     // Under your newest message: Sending… → Sent → Delivered → Seen
     const isLastMine = mine && i === msgs.length - 1;
     const after = x => x.at && new Date(x.at) >= new Date(m.at);
@@ -1083,6 +1119,7 @@ function viewConversation(){
   }).join('');
   return `<div class="convo card"><div class="chatbar"><button class="iconbtn back" data-cclose aria-label="Back"><svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg></button>
       <div class="cwho">${avatar(c, 32)}<div class="wtxt"><b>${esc(convName())}</b>${convSub(c) ? `<span>${esc(convSub(c))}</span>` : ''}</div></div>
+      ${chat.open && !ro() ? `<button class="iconbtn pinbtn ${myPins().indexOf(chat.open) >= 0 ? 'on' : ''}" data-pinchat="${esc(chat.open)}" aria-pressed="${myPins().indexOf(chat.open) >= 0}" aria-label="${myPins().indexOf(chat.open) >= 0 ? 'Unpin chat' : 'Pin chat to the top'}" title="${myPins().indexOf(chat.open) >= 0 ? 'Unpin' : 'Pin to the top'}">📌</button>` : ''}
       ${canEditChat() ? '<button class="lnk edit" data-cedit>Edit</button>' : '<span class="edit"></span>'}</div>
     <div class="msgs" id="msgs">${body || `<div class="hello">${avatar(c, 64)}<b>${esc(convName())}</b><span>${chat.loaded === chat.open ? 'No messages yet. Say hello 👋' : 'Loading…'}</span></div>`}</div>
     ${ro() ? '<div class="composer ro muted sm">You can read messages, but this sign-in is view-only.</div>' : `<div class="mentbox" id="ment" hidden></div>
@@ -1286,9 +1323,13 @@ document.addEventListener('click', ev => {
   if ('csheetx' in d){ chat.sheet = null; renderSheet(); return; }
   if (d.cdm){ chat.sheet = null; renderSheet(); openChat('dm-' + [data.meId, d.cdm].sort().join('-'), d.cdmname); return; }
   if (d.creply){ startReply(d.creply); return; }
+  if (d.copymsg){ const m = (chat.msgs || []).find(x => x.id === d.copymsg); chat.meta = ''; render(); if (m && m.text) copyText(m.text); return; }
+  if (d.pinchat){ const id = d.pinchat, on = myPins().indexOf(id) < 0;
+    if (on && myPins().length >= 10){ toast('You can pin up to 10 chats'); return; }
+    act('pinChat', { id, on: on ? '1' : '0' }); toast(on ? 'Pinned to the top of Messages' : 'Unpinned'); return; }
   if ('cunreply' in d){ chat.reply = null; render(); return; }
   if (d.cack){ toggleAck(d.cack); return; }
-  if (d.cacks){ const m = (chat.msgs || []).find(x => x.id === d.cacks); if (m) toast('Read by ' + (m.acks || []).map(n => n === data.me.name ? 'you' : first(n)).join(', ')); return; }
+  if (d.cacks){ const m = (chat.msgs || []).find(x => x.id === d.cacks); if (m) toast('👍 from ' + (m.acks || []).map(n => n === data.me.name ? 'you' : first(n)).join(', ')); return; }
   if ('cseen' in d){ const last = (chat.msgs || []).filter(m => m.fromId === chat.me).pop(); toast('Seen by ' + (chat.seen || []).filter(x => last && new Date(x.at) >= new Date(last.at)).map(x => first(x.name)).join(', ')); return; }
   if (d.cjump){ jumpTo(d.cjump); return; }
   if (d.openfind){ const [c, id] = d.openfind.split('|'); openChat(c, null, undefined, undefined, { find: id }); return; }
@@ -1497,6 +1538,7 @@ function patch(A, p, op){
   const byId = (list, id) => (list || []).find(x => String(x.id) === String(id));
   const byRow = (list, row) => (list || []).find(x => String(x.row) === String(row));
   switch (A){
+    case 'pinChat': { const v = data.view = data.view || { features: null, seen: [] }, pins = (v.pins || []).filter(x => x !== p.id); v.pins = p.on === '1' ? [p.id].concat(pins) : pins; return; }
     case 'toggleTask': if (data.tasks){ const t = byId(data.tasks.open, p.id); if (t){ data.tasks.open = data.tasks.open.filter(x => x !== t); data.tasks.doneToday = (data.tasks.doneToday || 0) + 1; } } return;
     case 'addTask': if (data.tasks && !data.tasks.open.some(x => String(x.id).indexOf('new') === 0 && x.text === p.text)) data.tasks.open.push({ id: tmp, list: p.list, text: p.text, order: 1e15, for: p.for || '', by: me }); else if (data.tasks){ const t = data.tasks.open.find(x => String(x.id).indexOf('new') === 0 && x.text === p.text); if (t) t.id = tmp; } return;
     case 'addEvent': {

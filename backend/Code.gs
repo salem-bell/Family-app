@@ -7,7 +7,7 @@
  * Deploy > Manage deployments > pencil > New version > Deploy, then Dashboard > 1. Set up again.
  */
 
-const VERSION = '3.91';   // the app compares this as a number, so never 3.10
+const VERSION = '3.92';   // the app compares this as a number, so never 3.10
 const EDITIONS = ['Personal', 'Couple', 'Family'];
 const ROLES = ['Organizer', 'Member', 'Viewer'];
 const PALETTE = ['#2F6FB2', '#C2185B', '#2E7D32', '#EF6C00', '#6A1B9A', '#00838F', '#8D6E63', '#455A64'];
@@ -83,7 +83,7 @@ const TABS = {
   'Game weeks':  ['Week of (Monday)', 'Champion', 'Points', 'Standings', 'Posted'],
   'Recipes':     ['Recipe', 'From', 'Category', 'Ingredients', 'Steps', 'Link', 'Added by'],
   // system tabs
-  'Views':       ['Person', 'Features (in order)', 'Look', 'Text', 'Seen', 'Mode'],
+  'Views':       ['Person', 'Features (in order)', 'Look', 'Text', 'Seen', 'Mode', 'Pinned chats'],
   'Channels':    ['ID', 'Name', 'Kind', 'Members (chat IDs; blank = everyone)', 'Who sees it', 'Created by', 'Created'],
   'Messages':    ['ID', 'Channel ID', 'From ID', 'From', 'Sent', 'Text', 'Photo (Drive file)', 'Reply to (message ID)', 'Read marks (chat IDs)'],
   'Chat reads':  ['Chat ID', 'Channel ID', 'Read at'],
@@ -633,7 +633,9 @@ function view_(ss, name) {
   let feats = null;
   try { feats = JSON.parse(String(r[1] || 'null')); } catch (_) { feats = splitList_(r[1]); }
   let seen = []; try { seen = JSON.parse(String(r[4] || '[]')); } catch (_) {}
-  return { features: Array.isArray(feats) ? feats : null, look: String(r[2] || '').toLowerCase(), text: String(r[3] || '').toLowerCase(), seen: Array.isArray(seen) ? seen : [], mode: /^(light|dark|auto)$/.test(String(r[5] || '')) ? String(r[5]) : '' };
+  let pins = []; try { pins = JSON.parse(String(r[6] || '[]')); } catch (_) {}
+  return { features: Array.isArray(feats) ? feats : null, look: String(r[2] || '').toLowerCase(), text: String(r[3] || '').toLowerCase(), seen: Array.isArray(seen) ? seen : [], mode: /^(light|dark|auto)$/.test(String(r[5] || '')) ? String(r[5]) : '',
+    pins: Array.isArray(pins) ? pins.map(String).filter(x => /^[\w-]{1,80}$/.test(x)).slice(0, 10) : [] };
 }
 
 function calendar_(id) { return (!id || id === 'primary') ? CalendarApp.getDefaultCalendar() : CalendarApp.getCalendarById(id); }
@@ -890,6 +892,15 @@ function act_(ss, p, me) {
   if (/^person(Add|Code|Link|Role|Active|Household)$/.test(A)) return peopleAct_(ss, p, me);
   if (/^(game(Guess|Share)|map(Guess|PlaceAdd|PlaceDel))$/.test(A)) return gameAct_(ss, p, me, today, tz);
   switch (A) {
+    case 'pinChat': {                                 // pin a conversation to the top of your Messages list (up to 10)
+      const id = String(p.id || ''); if (!/^[\w-]{1,80}$/.test(id)) throw new Error('Which chat?');
+      const sh = sheet('Views'); if (sh.getLastColumn() < 7) buildTab_(ss, 'Views');
+      const names = colValues_(sh, 1), i = names.indexOf(who), v = view_(ss, who) || { pins: [] };
+      let pins = (v.pins || []).filter(x => x !== id);
+      if (p.on === '1') { if (pins.length >= 10) throw new Error('You can pin up to 10 chats'); pins = [id].concat(pins); }
+      if (i >= 1) sh.getRange(i + 1, 7).setValue(JSON.stringify(pins)); else sh.appendRow([who, '', '', '', '[]', '', JSON.stringify(pins)]);
+      return;
+    }
     case 'saveView': {
       const sh = sheet('Views'), names = colValues_(sh, 1), i = names.indexOf(who);
       const known = list => { try { return JSON.parse(String(list || '[]')).filter(f => FEATURES.some(x => x[0] === f)).slice(0, 40); } catch (_) { return []; } };
@@ -2370,7 +2381,11 @@ function pushData_(force) {
   const c = CacheService.getScriptCache(), props = PropertiesService.getScriptProperties(), tz = ss.getSpreadsheetTimeZone(), today = Utilities.formatDate(new Date(), tz, 'yyyy-MM-dd');
   const last = Number(props.getProperty('DATA_PUSHED') || 0), dirtyAt = Number(c.get('DATA_DIRTY') || 0), now = Date.now();
   if (!force && dirtyAt < last && now - last < 14 * 60000 && props.getProperty('DATA_DAY') === today) return { idle: true };
-  const lock = LockService.getScriptLock(); if (!lock.tryLock(3000)) return { busy: true };
+  // No script lock: building everyone's copy takes a while, and holding the lock made saves wait (and time out).
+  // A short cache flag keeps two pushes from overlapping. A copy built from data that changed mid-build is older
+  // than that save, so the app ignores it, and the save marks the data for the next push.
+  if (!force && c.get('DATA_PUSHING')) return { busy: true };
+  c.put('DATA_PUSHING', String(Date.now()), 300);
   try {
     peopleOk_(ss);                                   // columns dragged out of place: send nothing (the app falls back to the sheet and shows the message)
     const started = Date.now(), full = force || now - Number(props.getProperty('DATA_FULL') || 0) > 3600000;
@@ -2403,7 +2418,7 @@ function pushData_(force) {
     try { c.put('DATA_H', JSON.stringify(hashes), 21600); if (missing.length) dataDirty_(); } catch (e) {}
     const p = { DATA_PUSHED: String(started), DATA_DAY: today }; if (full) p.DATA_FULL = String(started); props.setProperties(p);
     return { ok: true, people: people.length, sent: Object.keys(states).length, kb: Math.round(body.length / 1024), ms: Date.now() - started };
-  } finally { memoReset_(false); lock.releaseLock(); }
+  } finally { memoReset_(false); c.remove('DATA_PUSHING'); }
 }
 /** Menu: Dashboard › Fast loading. Adds the two Settings rows and a secret if missing, starts the every-minute sender, and sends everything once. */
 function setupFastLoading() {
