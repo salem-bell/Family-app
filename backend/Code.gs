@@ -251,6 +251,7 @@ function buildTab_(ss, name, ed, legacyPeople) {
   if (name === 'Gatherings') [3, 4, 8].forEach(c => sh.getRange(2, c, 499, 1).setNumberFormat('@'));
   if (name === 'Polls') sh.getRange(2, 4, 499, 1).setNumberFormat('@');
   if (name === 'Game' || name === 'Game weeks' || name === 'Map plays') sh.getRange(2, 1, 1999, 1).setNumberFormat('@');
+  if (name === 'Map plays') sh.getRange(2, 3, 1999, 2).setNumberFormat('@');   // taps & scores as text, or Sheets reads "100,100" as 100100
   if (name === 'Map places') sh.getRange(2, 5, 499, 1).setNumberFormat('@');
   if (name === 'Events') [2, 3, 4, 9].forEach(c => sh.getRange(2, c, 499, 1).setNumberFormat('@'));   // keep dates/times as typed
   let ex = examples_(ss, name, ed || guessEdition_(ss));
@@ -1453,7 +1454,9 @@ function mapGuess_(ss, p, me, today, tz) {
   g.push((Math.round(la * 1e3) / 1e3) + ',' + (Math.round(lo * 1e3) / 1e3)); s.push(pts);
   const done = s.length >= 5, total = s.reduce((a, b) => a + Number(b), 0);
   const row = [today, me.name, g.join(';'), s.join(','), done ? total : '', done ? new Date() : ''];
-  if (i >= 0) sh.getRange(i + 2, 1, 1, 6).setValues([row]); else sh.appendRow(row);
+  const r = i >= 0 ? i + 2 : sh.getLastRow() + 1;
+  sh.getRange(r, 3, 1, 2).setNumberFormat('@');                               // keep "100,100" from turning into the number 100100
+  sh.getRange(r, 1, 1, 6).setValues([row]);
 }
 /** Organizers add (looked up on Google Maps) or remove places for Geo-go. */
 function mapPlaceAct_(ss, p, me, tz) {
