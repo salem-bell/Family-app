@@ -440,3 +440,27 @@ body.compassopen{overflow:hidden}
   #menubtn{border:0!important;background:none!important;box-shadow:none!important;padding:4px 0!important;min-width:0!important;border-radius:0!important;font-size:.78em}
 }
 @media (min-width:1000px){ nav.menu .navout{display:none} }
+
+/* the family mark coming together – splash and first-load screen */
+#splash{position:fixed;inset:0;z-index:60;background:var(--bg);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px;transition:opacity .35s ease;padding-bottom:6vh}
+#splash.out{opacity:0;pointer-events:none}
+#splash .sp-sub{opacity:0;transition:opacity .4s}
+#splash.wait .sp-sub{opacity:1}
+.sp-art{position:relative;width:min(56vw,230px);aspect-ratio:350/330;color:var(--ink)}
+.loader .sp-art{width:min(46vw,190px)}
+.sp-mark{position:absolute;inset:0;width:100%;height:100%;overflow:visible}
+.sp-star{fill:currentColor;transform-box:fill-box;transform-origin:center;opacity:0;animation:spStar .75s cubic-bezier(.3,1.6,.5,1) forwards;animation-delay:var(--d)}
+@keyframes spStar{from{opacity:0;transform:scale(.15) rotate(-75deg)}to{opacity:1;transform:scale(1) rotate(0)}}
+.sp-tree{position:absolute;left:28.6%;top:4.5%;width:42%;height:73.6%;background:currentColor;-webkit-mask:url(brand/bellah-tree.png) center/contain no-repeat;mask:url(brand/bellah-tree.png) center/contain no-repeat;
+  transform-origin:50% 100%;clip-path:ellipse(0 0 at 50% 100%);animation:spSprout 1.35s cubic-bezier(.25,.8,.3,1) 1.45s forwards}
+@keyframes spSprout{0%{clip-path:ellipse(3% 4% at 50% 100%);transform:scale(.8)}30%{clip-path:ellipse(6% 45% at 50% 100%)}65%{clip-path:ellipse(48% 95% at 50% 100%)}100%{clip-path:ellipse(90% 140% at 50% 100%);transform:scale(1)}}
+.sp-b{font-family:Georgia,'Times New Roman',serif;font-weight:700;font-size:62px;fill:currentColor;opacity:0;animation:spB .6s ease 2.6s forwards}
+@keyframes spB{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+.sp-art.waiting .sp-tree{animation:spSprout 1.35s cubic-bezier(.25,.8,.3,1) 1.45s forwards,spBreathe 2.8s ease-in-out 3.2s infinite}
+.sp-art.waiting .sp-star{animation:spStar .75s cubic-bezier(.3,1.6,.5,1) var(--d) forwards,spTwinkle 3.4s ease-in-out calc(3.2s + var(--d) * 2) infinite}
+@keyframes spBreathe{0%,100%{transform:scale(1)}50%{transform:scale(1.03)}}
+@keyframes spTwinkle{0%,100%{opacity:1}50%{opacity:.45}}
+.sp-sub{font-family:var(--label);font-size:.8em;color:var(--muted);min-height:1.4em;text-align:center;max-width:300px;padding:0 20px}
+@media (prefers-reduced-motion: reduce){.sp-star,.sp-tree,.sp-b{animation:none!important;opacity:1;clip-path:none!important}}
+/* the crown's crest sits dead centre (the phone header's logo spacing must not reach it) */
+.crown .logomark{width:72%!important;height:72%!important;margin:0!important;flex:none}

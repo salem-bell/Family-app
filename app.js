@@ -1799,8 +1799,9 @@ function readKeyFromLink(){
     catch(_) { clearTimeout(t); res(window.__hash || ''); }
   });
 }
+function markHtml(waiting){ return `<div class="sp-art${waiting ? ' waiting' : ''}">` + '<svg class="sp-mark" viewBox="80 95 350 330" aria-hidden="true"><g class="sp-stars"><g class="sp-star" style="--d:0.000s"><polygon points="153.0,104.5 173.4,139.8 132.6,139.8"/><polygon points="153.0,151.5 132.6,116.2 173.4,116.2"/></g><g class="sp-star" style="--d:0.111s"><polygon points="123.0,149.0 143.4,184.2 102.6,184.2"/><polygon points="123.0,196.0 102.6,160.8 143.4,160.8"/></g><g class="sp-star" style="--d:0.221s"><polygon points="109.5,197.5 129.9,232.8 89.1,232.8"/><polygon points="109.5,244.5 89.1,209.2 129.9,209.2"/></g><g class="sp-star" style="--d:0.332s"><polygon points="118.0,248.5 138.4,283.8 97.6,283.8"/><polygon points="118.0,295.5 97.6,260.2 138.4,260.2"/></g><g class="sp-star" style="--d:0.442s"><polygon points="145.5,294.5 165.9,329.8 125.1,329.8"/><polygon points="145.5,341.5 125.1,306.2 165.9,306.2"/></g><g class="sp-star" style="--d:0.552s"><polygon points="182.5,326.0 202.9,361.2 162.1,361.2"/><polygon points="182.5,373.0 162.1,337.8 202.9,337.8"/></g><g class="sp-star" style="--d:0.663s"><polygon points="332.0,327.5 352.4,362.8 311.6,362.8"/><polygon points="332.0,374.5 311.6,339.2 352.4,339.2"/></g><g class="sp-star" style="--d:0.773s"><polygon points="368.5,293.0 388.9,328.2 348.1,328.2"/><polygon points="368.5,340.0 348.1,304.8 388.9,304.8"/></g><g class="sp-star" style="--d:0.884s"><polygon points="396.0,244.0 416.4,279.2 375.6,279.2"/><polygon points="396.0,291.0 375.6,255.8 416.4,255.8"/></g><g class="sp-star" style="--d:0.994s"><polygon points="401.0,196.5 421.4,231.8 380.6,231.8"/><polygon points="401.0,243.5 380.6,208.2 421.4,208.2"/></g><g class="sp-star" style="--d:1.105s"><polygon points="387.0,148.5 407.4,183.8 366.6,183.8"/><polygon points="387.0,195.5 366.6,160.2 407.4,160.2"/></g><g class="sp-star" style="--d:1.216s"><polygon points="356.0,105.5 376.4,140.8 335.6,140.8"/><polygon points="356.0,152.5 335.6,117.2 376.4,117.2"/></g></g><text class="sp-b" x="258.5" y="411" text-anchor="middle">B</text></svg><span class="sp-tree"></span>' + '</div>'; }   // a function, so it works however early the first render runs
 function step(msg){ if (!data) { const m = $('#main'); if (m) m.innerHTML = loaderHtml(msg); } }
-function loaderHtml(msg){ return `<div class="loader" role="status"><div class="grow" aria-hidden="true"><span class="ltree base"></span><span class="ltree fill"></span></div><div class="lname">${esc(document.title || 'Family HQ')}</div><div class="lrule" aria-hidden="true"></div><div class="lsub">${msg ? esc(msg[0].toUpperCase() + msg.slice(1)) + '…' : 'Loading…'}</div></div>`; }
+function loaderHtml(msg){ const s = $('#spsub'); if (s) s.textContent = msg ? msg[0].toUpperCase() + msg.slice(1) + '…' : ''; return `<div class="loader" role="status">${markHtml(true)}<div class="lsub">${msg ? esc(msg[0].toUpperCase() + msg.slice(1)) + '…' : 'Loading…'}</div></div>`; }
 window.addEventListener('unhandledrejection', e => { if (!data) { lastErr = 'mismatch'; lastMsg = String(e.reason && e.reason.message || e.reason); try { render(); } catch(_){} } });
 window.addEventListener('error', e => { if (!data) $('#main').innerHTML = `<section class="card" style="max-width:560px;margin:0 auto"><h2 class="lbl">The page hit an error</h2><div style="padding:12px 14px">${esc(e.message || e)}</div><div class="bar"><button class="btn go" onclick="location.reload()">Reload</button></div></section>`; });
 let pendingGo = (() => { try { const g = new URLSearchParams(location.search).get('go') || ''; if (g && window.history && history.replaceState) history.replaceState(null, '', location.pathname + location.hash); return g; } catch (_) { return ''; } })();
@@ -2200,3 +2201,25 @@ document.addEventListener('submit', ev => {
   pplDo('personAdd', { name, household: v('household'), role: v('role') || 'Member' }, () => { const p = (data.admin.people || []).find(x => x.name.toLowerCase() === name.toLowerCase()); if (p){ pplJust = p.name; pplWhy = 'new'; window.scrollTo(0, 0); } });
 });
 
+/* =========================================================
+   The family mark comes together (v3.95): the twelve stars appear one by one around the wreath, then the tree sprouts
+   and the B is set. Plays once each time the app is opened (tap to skip), and stays – the tree breathing – while a first
+   load is still on its way. Skipped for people who've asked their phone for less motion.
+   ========================================================= */
+const SPLASH_MS = 3500;   // the whole mark holds for a moment before the app shows
+(function splash(){
+  try {
+    if (matchMedia('(prefers-reduced-motion: reduce)').matches || sessionStorage.getItem('fam-splash')) return;
+    sessionStorage.setItem('fam-splash', '1');
+  } catch (e) { return; }
+  const el = document.createElement('div'); el.id = 'splash'; el.setAttribute('aria-hidden', 'true');
+  el.innerHTML = markHtml(false) + '<div class="sp-sub" id="spsub"></div>';
+  document.body.appendChild(el);
+  const t0 = Date.now(); let gone = false;
+  const ready = () => !!(data || lastErr || !KEY);
+  const hide = () => { if (gone) return; gone = true; el.classList.add('out'); setTimeout(() => el.remove(), 380); };
+  el.addEventListener('click', () => { if (ready()) hide(); });
+  const tick = () => { if (gone) return; const done = Date.now() - t0 >= SPLASH_MS;
+    if (done && ready()) hide(); else { if (done){ el.querySelector('.sp-art').classList.add('waiting'); el.classList.add('wait'); } setTimeout(tick, 120); } };
+  setTimeout(tick, 200);
+})();
