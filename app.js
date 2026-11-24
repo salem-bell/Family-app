@@ -855,7 +855,7 @@ function render(){
   const { c, late } = counts();
   const todayN = feats.reduce((n, f) => n + ({ 'Calendar': c.calendar, 'Bills & renewals': c.bills, 'Follow-ups': c.followups, 'Routines & chores': c.routines, 'Messages': c.chat }[f] || 0), 0);
   const badge = k => { const cnt = k === 'today' ? todayN : c[k]; return cnt ? `<span class="n ${late[k] ? 'warn' : ''}">${cnt}</span>` : ''; };
-  $('#nav').innerHTML = tabs.map(([k, n]) => `<button data-tab="${k}" aria-selected="${k === tab}">${navIc(k)}<span>${esc(n)}</span>${badge(k)}</button>`).join('') + '<hr><button data-go="view" aria-selected="' + (tab === 'view') + '">' + navIc('view') + '<span>My view</span></button>' + (data.admin && isOrg() ? '<button data-go="people" aria-selected="' + (tab === 'people') + '">' + navIc('people') + '<span>People & codes</span></button>' : '');
+  $('#nav').innerHTML = tabs.map(([k, n]) => `<button data-tab="${k}" aria-selected="${k === tab}">${navIc(k)}<span>${esc(n)}</span>${badge(k)}</button>`).join('') + '<hr><button data-go="view" aria-selected="' + (tab === 'view') + '">' + navIc('view') + '<span>My view</span></button>' + (data.admin && isOrg() ? '<button data-go="people" aria-selected="' + (tab === 'people') + '">' + navIc('people') + '<span>People & codes</span></button>' : '') + (data.signin ? '<button class="navout" data-signout>' + navIc('signout') + '<span>Sign out</span></button>' : '');
   $('#nav').hidden = !menuOpen; $('#menubtn').hidden = false; $('#menubtn').setAttribute('aria-expanded', menuOpen);
   document.body.classList.toggle('menuopen', menuOpen);
   renderBar(tabs, k => { const cnt = k === 'today' ? todayN : c[k]; return cnt ? { n: cnt, late: !!late[k] } : null; });
@@ -1516,6 +1516,7 @@ const NAV_P = {   // engraved-line set (v3.95): --m is the main stroke, --d the 
   "stories": "<path d=\"M3 6.5c3 -1.6 6 -1.6 9 0c3 -1.6 6 -1.6 9 0v12.5c-3 -1.6 -6 -1.6 -9 0c-3 -1.6 -6 -1.6 -9 0z\" style=\"stroke-width:var(--m,1.2)\"/><path d=\"M12 6.5v12.5\" style=\"stroke-width:var(--m,1.2)\"/><path d=\"M5 9.4c1.7 -.6 3.3 -.6 5 0M5 12.4c1.7 -.6 3.3 -.6 5 0M14 9.4c1.7 -.6 3.3 -.6 5 0\" style=\"stroke-width:var(--d,.6);opacity:.55\"/>",
   "view": "<path d=\"M4 6h8M16 6h4M4 12h2M10 12h10M4 18h11M19 18h1\" style=\"stroke-width:var(--m,1.2)\"/><path d=\"M14 6m-2 0a2 2 0 1 0 4 0a2 2 0 1 0 -4 0M8 12m-2 0a2 2 0 1 0 4 0a2 2 0 1 0 -4 0M17 18m-2 0a2 2 0 1 0 4 0a2 2 0 1 0 -4 0\" style=\"stroke-width:var(--m,1.2)\"/>",
   "people": "<path d=\"M9 7m-4 0a4 4 0 1 0 8 0a4 4 0 1 0 -8 0\" style=\"stroke-width:var(--m,1.2)\"/><path d=\"M3 21v-2a4 4 0 0 1 4 -4h4a4 4 0 0 1 4 4v2\" style=\"stroke-width:var(--m,1.2)\"/><path d=\"M16 3.1a4 4 0 0 1 0 7.8M21 21v-2a4 4 0 0 0 -3 -3.9\" style=\"stroke-width:var(--m,1.2)\"/><path d=\"M6.6 5.5a2.4 2.4 0 0 1 2.4 -.9\" style=\"stroke-width:var(--d,.6);opacity:.55\"/>",
+  "signout": "<path d=\"M14 8v-3a2 2 0 0 0 -2 -2h-6a2 2 0 0 0 -2 2v14a2 2 0 0 0 2 2h6a2 2 0 0 0 2 -2v-3\" style=\"stroke-width:var(--m,1.2)\"/><path d=\"M9 12h12M18 9l3 3l-3 3\" style=\"stroke-width:var(--m,1.2)\"/><path d=\"M5.6 4.8v14.4\" style=\"stroke-width:var(--d,.6);opacity:.55\"/>",
   "all": "<path d=\"M4 4h6v6h-6zM14 4h6v6h-6zM4 14h6v6h-6zM14 14h6v6h-6z\" style=\"stroke-width:var(--m,1.2)\"/><path d=\"M5.6 5.6h2.8M15.6 5.6h2.8M5.6 15.6h2.8M15.6 15.6h2.8\" style=\"stroke-width:var(--d,.6);opacity:.55\"/>",
 };
 const navIc = k => `<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${NAV_P[k] || NAV_P.all}</svg>`;
@@ -1576,7 +1577,7 @@ function cpDraw(){
     <circle r="${F - 15}" fill="none" style="stroke:var(--ink)" stroke-width=".6" opacity=".4"/>${marks}<g>${rose(r - 26, r - 40)}</g>
   </svg>
   <svg id="cpneedle" width="30" height="26" viewBox="-15 0 30 26" style="left:${x - 15}px;top:${y - B - 24}px" aria-hidden="true"><path d="M-11 2 L11 2 L0 22 Z" style="fill:var(--accent);stroke:var(--metalD)" stroke-width="1.2" stroke-linejoin="round"/></svg>
-  <button id="cphub" style="left:${x}px;top:${y}px"><span id="cpname"></span><small>tap to open</small></button>` +
+  <button id="cphub" style="left:${x}px;top:${y}px"><svg viewBox="-59 -59 118 118" aria-hidden="true"><defs><path id="cparc" d="M-42 6 A42 42 0 0 1 42 6"/></defs><text id="cpnametxt" class="hn"><textPath id="cpname" href="#cparc" startOffset="50%" text-anchor="middle"></textPath></text><path d="M-14 12h28" class="hr"/><text class="hs" y="25" text-anchor="middle">tap to open</text></svg><span class="sr" id="cpnamesr"></span></button>` +
     NAV.dial.map(k => `<button class="cpi" data-ck="${k}" aria-label="${esc(NAV.names[k] || k)}" title="${esc(NAV.names[k] || k)}">${navIc(k)}${NAV.badge(k) ? '<span class="dot"></span>' : ''}</button>`).join('') +
     `<button id="cpall" style="left:${x}px;top:${y + B + 22}px">${navIc('all')}All features</button>`;
   cpPlace(true);
@@ -1591,7 +1592,9 @@ function cpPlace(anim){
   });
   const bz = $('#bezel'); if (bz){ bz.style.transition = anim ? 'transform .24s' : 'none'; bz.style.transform = `rotate(${CP.rot}deg)`; }
   if (s !== CP.last){ CP.last = s; if (navigator.vibrate) try { navigator.vibrate(5); } catch (_) {} }
-  const nm = $('#cpname'); if (nm) nm.textContent = s >= 0 ? (NAV.names[NAV.dial[s]] || '') : '';
+  const nm = $('#cpname'), name = s >= 0 ? (NAV.names[NAV.dial[s]] || '') : '';
+  if (nm && nm.textContent !== name){ nm.textContent = name; const sr = $('#cpnamesr'); if (sr) sr.textContent = name + ', tap to open';
+    const t = $('#cpnametxt'); if (t){ t.style.fontSize = ''; try { const len = t.getComputedTextLength(), room = 104; if (len > room) t.style.fontSize = Math.max(8, 14 * room / len) + 'px'; } catch (_) {} } }   // the name curves along the top of the center; long names get smaller
 }
 const cpSnap = () => { CP.rot = Math.round(CP.rot / cpStep()) * cpStep(); cpPlace(true); };
 function cpCoast(){

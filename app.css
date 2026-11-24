@@ -386,8 +386,11 @@ body.compassopen{overflow:hidden}
 .cpi .ic{--m:1.25}
 .cpi.sel .ic{--m:1.55}
 #cphub{all:unset;box-sizing:border-box;position:absolute;width:118px;height:118px;margin:-59px 0 0 -59px;border-radius:50%;background:var(--face);border:1px solid var(--metalD);box-shadow:0 0 0 3px var(--metal),0 0 0 4px var(--metalD),inset 0 0 0 5px var(--face),inset 0 0 0 6px var(--line),inset 0 1px 3px rgba(60,40,10,.12);display:flex;flex-direction:column;align-items:center;justify-content:center;cursor:pointer;color:var(--ink);text-align:center}
-#cpname{font-family:var(--head);font-size:1.12em;line-height:1.1;padding:0 8px}
-#cphub small{font-family:var(--head);font-style:italic;font-size:.78em;color:var(--muted)}
+#cphub svg{position:absolute;inset:0;width:100%;height:100%;overflow:visible}
+#cphub .hn{font-family:'Cinzel',Georgia,serif;font-weight:600;font-size:14px;letter-spacing:.1em;text-transform:uppercase;fill:currentColor}
+#cphub .hs{font-family:'Spectral',Georgia,serif;font-style:italic;font-size:9.5px;letter-spacing:.02em;text-transform:none;fill:var(--muted)}
+#cphub .hr{stroke:var(--metal);stroke-width:.8;opacity:.8}
+#cphub .sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
 #cpall{all:unset;box-sizing:border-box;position:absolute;transform:translateX(-50%);display:flex;align-items:center;gap:8px;padding:7px 18px;border-radius:4px;border:1px solid var(--metalD);background:var(--face);color:var(--ink);font-family:'Cinzel',var(--head);font-size:.9em;letter-spacing:.04em;box-shadow:inset 0 0 0 2px var(--face),inset 0 0 0 3px var(--line);cursor:pointer;white-space:nowrap}
 #cpall .ic{width:17px;height:17px;--m:1.4}
 @media (prefers-reduced-motion: reduce){.crown,.crown .crownface,.cpi{transition:none}}
@@ -416,3 +419,24 @@ body.compassopen{overflow:hidden}
 .lrule::after{content:"✶";position:absolute;left:50%;top:50%;transform:translate(-50%,-55%);background:var(--bg);padding:0 6px;font-size:11px;color:var(--muted)}
 .lsub{font-family:var(--label);font-size:.8em;color:var(--muted);max-width:300px}
 @media (prefers-reduced-motion: reduce){.ltree.fill{animation:none;clip-path:none}}
+
+/* phones: a compact one-line header – crest, name, refresh, you. My view and Sign out live in the section list. */
+@media (max-width:999px){
+  header{padding:calc(8px + env(safe-area-inset-top)) 14px 0!important}
+  .top{flex-wrap:nowrap;gap:8px;min-height:44px}
+  .brandwrap{flex:1 1 auto;min-width:0}
+  .brandwrap > span:last-child{min-width:0;display:block}
+  .brand{display:block;font-size:1.3em!important;line-height:1.15;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;letter-spacing:normal}
+  .sky .brand{font-size:1em!important;letter-spacing:.18em}
+  .ivory .brand,.burgundy .brand{font-size:1.75em!important}
+  .lavender .brand{font-size:.98em!important;letter-spacing:.04em!important}
+  .tagline{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:.52em!important;letter-spacing:.14em;margin-top:1px}
+  .logo,.sky .logo{height:34px!important;margin-right:9px!important}
+  .logomark{width:34px!important;height:34px!important;flex:none;margin-right:9px!important}
+  .topr{gap:4px}
+  .me{flex-wrap:nowrap!important;gap:0!important}
+  .me button{display:none!important}
+  .menurow{padding:2px 0 6px!important}
+  #menubtn{border:0!important;background:none!important;box-shadow:none!important;padding:4px 0!important;min-width:0!important;border-radius:0!important;font-size:.78em}
+}
+@media (min-width:1000px){ nav.menu .navout{display:none} }
