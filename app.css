@@ -331,7 +331,7 @@
 /* =========================================================
    v3.95 – navigation: bottom bar + compass on phones, Peregrine-style sidebar on desktop
    ========================================================= */
-nav.menu .ic{width:20px;height:20px;flex:none;opacity:.85}
+nav.menu .ic{width:20px;height:20px;flex:none;opacity:.9;--m:1.35;--d:.65}
 nav.menu button{display:flex;align-items:center;justify-content:flex-start;gap:12px;text-align:left}
 nav.menu button > span:not(.n){flex:1;text-align:left}
 nav.menu button .n{margin-left:auto}
@@ -341,7 +341,8 @@ nav.menu button .n{margin-left:auto}
 .tb span{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .tb .ic{width:23px;height:23px}
 .tb[aria-current=page]{color:var(--accent)}
-.tb[aria-current=page] .ic{stroke-width:2.1}
+.tb .ic{--m:1.45;--d:.7}
+.tb[aria-current=page] .ic{--m:1.75}
 .tb .n{position:absolute;top:2px;left:calc(50% + 5px);min-width:16px;padding:0 4px;border-radius:9px;background:var(--accent);color:var(--onaccent,#fff);font-size:.85em;line-height:16px;font-weight:700;box-sizing:border-box}
 .tb .n.warn{background:var(--warn)}
 .tb:focus-visible,.crown:focus-visible,.cpi:focus-visible,#cphub:focus-visible,#cpall:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
@@ -382,12 +383,13 @@ body.compassopen{overflow:hidden}
 .cpi{all:unset;box-sizing:border-box;position:absolute;width:46px;height:46px;margin:-23px 0 0 -23px;border-radius:50%;display:flex;align-items:center;justify-content:center;color:var(--ink);cursor:pointer;transition:left .24s,top .24s,transform .24s}
 .cpi .ic{width:23px;height:23px}
 .cpi.sel{color:var(--accent);background:color-mix(in srgb,var(--accent) 13%,transparent);transform:scale(1.18)}
-.cpi.sel .ic{stroke-width:2.1}
+.cpi .ic{--m:1.25}
+.cpi.sel .ic{--m:1.55}
 #cphub{all:unset;box-sizing:border-box;position:absolute;width:118px;height:118px;margin:-59px 0 0 -59px;border-radius:50%;background:var(--face);border:1px solid var(--metalD);box-shadow:0 0 0 3px var(--metal),0 0 0 4px var(--metalD),inset 0 0 0 5px var(--face),inset 0 0 0 6px var(--line),inset 0 1px 3px rgba(60,40,10,.12);display:flex;flex-direction:column;align-items:center;justify-content:center;cursor:pointer;color:var(--ink);text-align:center}
 #cpname{font-family:var(--head);font-size:1.12em;line-height:1.1;padding:0 8px}
 #cphub small{font-family:var(--head);font-style:italic;font-size:.78em;color:var(--muted)}
 #cpall{all:unset;box-sizing:border-box;position:absolute;transform:translateX(-50%);display:flex;align-items:center;gap:8px;padding:7px 18px;border-radius:4px;border:1px solid var(--metalD);background:var(--face);color:var(--ink);font-family:'Cinzel',var(--head);font-size:.9em;letter-spacing:.04em;box-shadow:inset 0 0 0 2px var(--face),inset 0 0 0 3px var(--line);cursor:pointer;white-space:nowrap}
-#cpall .ic{width:17px;height:17px}
+#cpall .ic{width:17px;height:17px;--m:1.4}
 @media (prefers-reduced-motion: reduce){.crown,.crown .crownface,.cpi{transition:none}}
 @media (min-width:1000px){
   .tabbar{display:none!important}
