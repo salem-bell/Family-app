@@ -7,7 +7,7 @@
  * Deploy > Manage deployments > pencil > New version > Deploy, then Dashboard > 1. Set up again.
  */
 
-const VERSION = '3.92';   // the app compares this as a number, so never 3.10
+const VERSION = '3.95';   // the app compares this as a number, so never 3.10
 const EDITIONS = ['Personal', 'Couple', 'Family'];
 const ROLES = ['Organizer', 'Member', 'Viewer'];
 const PALETTE = ['#2F6FB2', '#C2185B', '#2E7D32', '#EF6C00', '#6A1B9A', '#00838F', '#8D6E63', '#455A64'];
@@ -41,7 +41,7 @@ const FEATURES = [
   ['Recipes',            'recipes',   [0, 0, 1], 'The family cookbook: ingredients, steps and whose recipe it is.',         'The app, or the Recipes tab', ['Recipes']],
   ['Marketplace',        'market',    [0, 0, 1], 'Give things away or ask for a hand – tagged by region, so people nearby see it first.', 'The app; Settings › Regions', ['Marketplace']],
   ['Stories',            'stories',   [0, 0, 1], 'Family stories and memories, so they don\'t get lost.',                      'The app, or the Stories tab', ['Stories']],
-  ['Games',              'games',     [0, 0, 1], 'Two quick daily games – Word-go and Geo-go – with one weekly leaderboard. Monday\'s results go to the Everyone chat.', 'The app; Map places tab (your own places for the map); Settings › Family places per day', ['Game', 'Map plays', 'Map places', 'Game weeks']],
+  ['Games',              'games',     [0, 0, 1], 'Two quick daily games – Word-go and Geo-go – with one weekly leaderboard. Monday brings a notification with last week\'s results.', 'The app; Map places tab (your own places for the map); Settings › Family places per day', ['Game', 'Map plays', 'Map places', 'Game weeks']],
   ['Inventory alerts',   'inventory', [0, 0, 0], 'Items below par (for a pantry, supplies or a shop).',                        'Inventory tab', ['Inventory']],
 ];
 const ED_INDEX = { personal: 0, couple: 1, family: 2 };
@@ -164,7 +164,7 @@ function onOpen() {
     .addItem('New link for the selected person', 'resetSelected')
     .addItem('New links for everyone', 'resetAll')
     .addSeparator()
-    .addItem('Post last week\'s game results', 'gameWeeklyNow')
+    .addItem('Send last week\'s game results', 'gameWeeklyNow')
     .addItem('Fast loading: turn on / check', 'setupFastLoading')
     .addToUi();
 }
@@ -187,6 +187,7 @@ function setup() {
   Object.keys(TABS).forEach(t => { if (ss.getSheetByName(t)) buildTab_(ss, t, ed); });   // older copies: add new columns
   SYSTEM_TABS.forEach(t => buildTab_(ss, t, ed));
   ensureKeys_(ss, isCopy);
+  bumpGen_(['*']);
   const gameNote = on[GAMES_] && !gameTrigger_() ? '\n\nGames could not set up its Monday update (Apps Script needs permission for triggers). The first person to open the app each Monday will post it instead.' : '';
   if (isCopy) PropertiesService.getScriptProperties().setProperties({ SHEET_ID: ss.getId() });
 
@@ -486,6 +487,7 @@ function whoIs_(ss, key) {
 
 /** Every call from the app comes through here. */
 function api(key, p) {
+  const t0 = Date.now(); GENS_ = null;
   memoReset_(false);
   const ss = SpreadsheetApp.getActive();
   const me = whoIs_(ss, key);
@@ -494,7 +496,7 @@ function api(key, p) {
   p = p || {};
   let results = null;
   if (Array.isArray(p.actions)) {                    // v3.2: the app's save queue – several changes, one lock, one read back
-    const cache = CacheService.getScriptCache(), lock = LockService.getScriptLock();
+    const cache = CacheService.getScriptCache(), lock = LockService.getScriptLock(), touched = [], cids = {};
     lock.waitLock(25000);
     try {
       results = p.actions.slice(0, 40).map(a => {
@@ -502,17 +504,20 @@ function api(key, p) {
         if (k && cache.get(k)) return { op, ok: true, dup: true };   // already saved (the first try timed out on the phone)
         try {
           if (me.role === 'Viewer' && !/^(saveView|push(Sub|Unsub|Prefs|Test))$/.test(a.action)) throw new Error('This sign-in is view-only');
-          memoReset_(false); act_(ss, a, me); SpreadsheetApp.flush();
+          a = cidIn_(a, cids);
+          memoReset_(false); const r = actTracked_(ss, a, me, touched); SpreadsheetApp.flush();
+          cidOut_(op, r, cids);
           if (k) cache.put(k, '1', 21600);
           return { op, ok: true };
         } catch (e) { if (k) cache.put(k, '1', 21600); return { op, error: String(e && e.message || e) }; }
       });
-    } finally { lock.releaseLock(); }
+    } finally { bumpGen_(touched); lock.releaseLock(); }
   } else if (p.action) {
     if (me.role === 'Viewer' && !/^(saveView|push(Sub|Unsub|Prefs|Test))$/.test(p.action)) throw new Error('This link is view-only');
     const lock = LockService.getScriptLock();
     lock.waitLock(20000);
-    try { act_(ss, p, me); SpreadsheetApp.flush(); } finally { lock.releaseLock(); }
+    const touched = [];
+    try { actTracked_(ss, cidIn_(p, {}), me, touched); SpreadsheetApp.flush(); } finally { bumpGen_(touched); lock.releaseLock(); }
   } else {
     // A plain read waits for any change that's mid-save, so it never returns the "before" picture.
     const lock = LockService.getScriptLock();
@@ -520,7 +525,31 @@ function api(key, p) {
   }
   if (results || p.action) dataDirty_();              // fast loading: everyone's copy is refreshed within a minute
   memoReset_(true);                                  // the read below can reuse each tab it has already read
-  try { const out = state_(ss, me, p.have); if (results) out.results = results; return out; } finally { memoReset_(false); }
+  try { const out = state_(ss, me, p.have); if (results) out.results = results; out.ms = Date.now() - t0; return out; } finally { memoReset_(false); }
+}
+/** Runs one save and notes which tabs it touched (act_'s sheet() helper records most; TOUCH_ covers the rest). */
+function actTracked_(ss, a, me, touched) {
+  TOUCHED_ = [];
+  try { return act_(ss, a, me); }
+  finally { const t = TOUCHED_.concat(TOUCH_[a.action] || []); TOUCHED_ = null; (t.length ? t : ['*']).forEach(x => touched.push(x)); }
+}
+/* Something added on the phone shows at once under a temporary id ('tmp' + its save's op). An edit to it can be saved
+   straight away: the server swaps the temporary id for the real one (from this batch, or remembered for 6 hours). */
+const TMP_RE_ = /^tmp[0-9a-z]{12,}$/;
+function cidIn_(a, cids) {
+  let out = a;
+  ['id', 'row'].forEach(f => {
+    const v = String(a[f] || ''); if (!TMP_RE_.test(v)) return;
+    const real = cids[v] || CacheService.getScriptCache().get('cid:' + v);
+    if (!real) throw new Error('Still saving that – try again in a moment');
+    if (out === a) out = Object.assign({}, a); out[f] = real;
+  });
+  return out;
+}
+function cidOut_(op, r, cids) {
+  if (!op || !r || (r.id === undefined && r.row === undefined)) return;
+  const real = String(r.id !== undefined ? r.id : r.row), k = 'tmp' + op;
+  cids[k] = real; try { CacheService.getScriptCache().put('cid:' + k, real, 21600); } catch (e) {}
 }
 
 /* ============================================================
@@ -530,25 +559,31 @@ function api(key, p) {
    back the version it holds ("have"): when nothing has changed since (same day, same 15 minutes – which also catches
    Google Calendar edits), none of the sections are built and the reply says "same: *". When something has, everything is
    built but only sections whose content differs from the phone's copy are sent; the rest are listed under "same". */
-const CORE_ = ['version', 'edition', 'name', 'me', 'lists', 'look', 'lookMode', 'accent', 'budgetShows', 'logo', 'tagline', 'today', 'features', 'sheet', 'updated', 'errors', 'edge', 'people', 'order', 'view', 'signin', 'meId', 'active', 'push', 'phoneApp', 'ver', 'h', 'same'];
+const CORE_ = ['v', 'built', 'ms', 'version', 'edition', 'name', 'me', 'lists', 'look', 'lookMode', 'accent', 'budgetShows', 'logo', 'tagline', 'today', 'features', 'sheet', 'updated', 'errors', 'edge', 'people', 'order', 'view', 'signin', 'meId', 'active', 'push', 'phoneApp', 'ver', 'h', 'same'];
 function dataVer_(me, today) { return [VERSION, me.name, me.role, today, Math.floor(Date.now() / 9e5), CacheService.getScriptCache().get('DATA_DIRTY') || '0'].join('|'); }
 function state_(ss, me, have) {
   const tz0 = ss.getSpreadsheetTimeZone(), ver = dataVer_(me, Utilities.formatDate(new Date(), tz0, 'yyyy-MM-dd'));
   have = have && typeof have === 'object' ? have : {};
   const quick = have.ver === ver;                    // nothing changed since this phone's copy: skip building the sections
-  const out = state0_(ss, me, quick);
+  const hv = have.h && typeof have.h === 'object' ? have.h : {}, vv = have.v && typeof have.v === 'object' ? have.v : {};
+  const vers = secVersions_(me, Utilities.formatDate(new Date(), tz0, 'yyyy-MM-dd')), skip = {};
+  // v3.95: a section the phone holds at its current version is not built at all
+  if (!quick) Object.keys(vers).forEach(k => { if (vv[k] && vv[k] === vers[k] && hv[k]) skip[k] = 1; });
+  const out = state0_(ss, me, quick, skip);
   out.ver = ver;
-  if (quick) { out.same = '*'; out.h = have.h || {}; return out; }
-  const h = {}, same = [], hv = have.h || {};
+  if (quick) { out.same = '*'; out.h = hv; out.v = Object.keys(vv).length ? vv : vers; return out; }
+  const h = {}, same = [];
   Object.keys(out).forEach(k => {
     if (CORE_.indexOf(k) >= 0 || out[k] === undefined) return;
     h[k] = Utilities.base64Encode(Utilities.computeDigest(Utilities.DigestAlgorithm.MD5, JSON.stringify(out[k]), Utilities.Charset.UTF_8)).slice(0, 16);
     if (hv[k] === h[k]) { delete out[k]; same.push(k); }
   });
-  out.h = h; out.same = same;
+  Object.keys(skip).forEach(k => { if (!(k in h)) { h[k] = hv[k]; same.push(k); } });
+  out.h = h; out.same = same; out.v = vers; out.built = Object.keys(h).length - Object.keys(skip).length;
   return out;
 }
-function state0_(ss, me, coreOnly) {
+function state0_(ss, me, coreOnly, skip) {
+  skip = skip || {};
   const tz = ss.getSpreadsheetTimeZone(), cfg = config_(ss), on = cfg.features, errors = [];
   if (on['Messages'] && !me.id) { try { me = chatMe_(ss, me); memoReset_(true); } catch (e) { errors.push('Messages: ' + e.message); } }   // gives anyone new a chat ID
   const today = Utilities.formatDate(new Date(), tz, 'yyyy-MM-dd');
@@ -566,39 +601,39 @@ function state0_(ss, me, coreOnly) {
     out.phoneApp = /^https:\/\//.test(setting_(ss, 'Phone app address')) ? setting_(ss, 'Phone app address') : '';
     return out;
   }
-  const run = (name, fn) => { if (!on[name]) return undefined; try { return fn(); } catch (e) { errors.push(name + ': ' + e.message); return null; } };
-  out.events    = run('Calendar', () => events_(ss, cfg, tz, on['Week ahead'] ? Math.max(cfg.days, 8) : cfg.days, errors));
-  if (!out.events && on['Week ahead']) { try { out.events = events_(ss, cfg, tz, 8, errors); } catch (e) { errors.push('Week ahead: ' + e.message); } }
-  if (on['Calendar'] || on['Week ahead']) out.cal = calInfo_(ss, cfg, me);
-  out.tasks     = run('To-dos', () => tasks_(ss, today));
-  out.shopping  = run('Shopping list', () => shopping_(ss));
-  out.meals     = run('Meal plan', () => meals_(ss, tz, today));
-  out.routines  = run('Routines & chores', () => routines_(ss, tz, today));
-  out.upkeep    = run('Home & car upkeep', () => upkeep_(ss, tz, today));
-  out.bills     = run('Bills & renewals', () => bills_(ss, tz, today));
-  out.budget    = run('Budget snapshot', () => budget_(ss, tz, today, cfg));
-  out.goals     = run('Savings goals', () => goals_(ss, tz));
-  out.numbers   = run('Numbers', () => numbers_(ss, tz));
-  out.trips     = run('Trips', () => trips_(ss, tz, today));
-  out.dateNights= run('Date nights', () => dateNights_(ss, cfg, tz));
-  out.dates     = run('Important dates', () => dates_(ss, tz, today));
-  out.notes     = run('Notes board', () => notes_(ss));
-  out.links     = run('Links', () => links_(ss));
-  out.followups = run('Follow-ups', () => followups_(ss, tz));
-  out.inventory = run('Inventory alerts', () => inventory_(ss));
-  out.directory = run('Family directory', () => directory_(ss, tz, today));
-  out.gatherings = run('Gatherings', () => gatherings_(ss, tz, today, me));
-  out.polls     = run('Polls', () => polls_(ss, tz, today, me));
-  out.recipes   = run('Recipes', () => recipes_(ss));
-  out.market    = run('Marketplace', () => market_(ss, tz, today));
-  out.stories   = run('Stories', () => stories_(ss));
-  out.game      = run(GAMES_, () => game_(ss, tz, today, me));
-  if (out.market) out.regions = splitList_(setting_(ss, 'Regions'));
+  const run = (name, fn, key) => { if (!on[name] || (key && skip[key])) return undefined; try { return fn(); } catch (e) { errors.push(name + ': ' + e.message); return null; } };
+  out.events    = run('Calendar', () => events_(ss, cfg, tz, on['Week ahead'] ? Math.max(cfg.days, 8) : cfg.days, errors), 'events');
+  if (!out.events && !skip.events && on['Week ahead']) { try { out.events = events_(ss, cfg, tz, 8, errors); } catch (e) { errors.push('Week ahead: ' + e.message); } }
+  if ((on['Calendar'] || on['Week ahead']) && !skip.cal) out.cal = calInfo_(ss, cfg, me);
+  out.tasks     = run('To-dos', () => tasks_(ss, today), 'tasks');
+  out.shopping  = run('Shopping list', () => shopping_(ss), 'shopping');
+  out.meals     = run('Meal plan', () => meals_(ss, tz, today), 'meals');
+  out.routines  = run('Routines & chores', () => routines_(ss, tz, today), 'routines');
+  out.upkeep    = run('Home & car upkeep', () => upkeep_(ss, tz, today), 'upkeep');
+  out.bills     = run('Bills & renewals', () => bills_(ss, tz, today), 'bills');
+  out.budget    = run('Budget snapshot', () => budget_(ss, tz, today, cfg), 'budget');
+  out.goals     = run('Savings goals', () => goals_(ss, tz), 'goals');
+  out.numbers   = run('Numbers', () => numbers_(ss, tz), 'numbers');
+  out.trips     = run('Trips', () => trips_(ss, tz, today), 'trips');
+  out.dateNights= run('Date nights', () => dateNights_(ss, cfg, tz), 'dateNights');
+  out.dates     = run('Important dates', () => dates_(ss, tz, today), 'dates');
+  out.notes     = run('Notes board', () => notes_(ss), 'notes');
+  out.links     = run('Links', () => links_(ss), 'links');
+  out.followups = run('Follow-ups', () => followups_(ss, tz), 'followups');
+  out.inventory = run('Inventory alerts', () => inventory_(ss), 'inventory');
+  out.directory = run('Family directory', () => directory_(ss, tz, today), 'directory');
+  out.gatherings = run('Gatherings', () => gatherings_(ss, tz, today, me), 'gatherings');
+  out.polls     = run('Polls', () => polls_(ss, tz, today, me), 'polls');
+  out.recipes   = run('Recipes', () => recipes_(ss), 'recipes');
+  out.market    = run('Marketplace', () => market_(ss, tz, today), 'market');
+  out.stories   = run('Stories', () => stories_(ss), 'stories');
+  out.game      = run(GAMES_, () => game_(ss, tz, today, me), 'game');
+  if (on['Marketplace']) out.regions = splitList_(setting_(ss, 'Regions'));
   if (on['Messages'] && me.id) { try { out.meId = me.id; out.active = activeMap_(ss, me);
-      if (chatLive_(ss)) { out.chat = { url: setting_(ss, 'Chat service address').replace(/\/+$/, '') }; out.channels = []; } else out.channels = channels_(ss, me); } catch (e) { errors.push('Messages: ' + e.message); } }
+      if (chatLive_(ss)) { out.chat = { url: setting_(ss, 'Chat service address').replace(/\/+$/, '') }; out.channels = []; } else if (!skip.channels) out.channels = channels_(ss, me); } catch (e) { errors.push('Messages: ' + e.message); } }
   out.push = pushInfo_(ss, me);
   out.phoneApp = /^https:\/\//.test(setting_(ss, 'Phone app address')) ? setting_(ss, 'Phone app address') : '';
-  if (me.role === 'Organizer') { try { out.admin = admin_(ss, me); } catch (e) { errors.push('People: ' + e.message); } }
+  if (me.role === 'Organizer' && !skip.admin) { try { out.admin = admin_(ss, me); } catch (e) { errors.push('People: ' + e.message); } }
   return out;
 }
 
@@ -885,7 +920,7 @@ function inventory_(ss) {
 function act_(ss, p, me) {
   const tz = ss.getSpreadsheetTimeZone(), today = Utilities.formatDate(new Date(), tz, 'yyyy-MM-dd');
   const who = me.name, A = p.action;
-  const sheet = n => { const s = ss.getSheetByName(n); if (!s) throw new Error('The ' + n + ' tab is missing. Ask the organizer to run Dashboard › 1. Set up.'); return s; };
+  const sheet = n => { if (TOUCHED_) TOUCHED_.push(n); const s = ss.getSheetByName(n); if (!s) throw new Error('The ' + n + ' tab is missing. Ask the organizer to run Dashboard › 1. Set up.'); return s; };
   const rowMatches = (sh, r, col, val) => r >= 2 && r <= sh.getLastRow() && String(sh.getRange(r, col).getValue()) === String(val);
 
   if (/^(newChannel|editChannel|deleteMessage)$/.test(A)) return chatAct_(ss, p, me);
@@ -912,13 +947,13 @@ function act_(ss, p, me) {
       return;
     }
     case 'toggleTask': { const sh = sheet('To-dos'), r = findRow_(sh, p.id); if (r) { sh.getRange(r, 4).setValue(p.done === '1'); sh.getRange(r, 6).setValue(p.done === '1' ? new Date() : ''); } return; }
-    case 'addTask': { const text = clean_(p.text, 300); if (!text) return; const sh = sheet('To-dos'); sh.appendRow([nextId_(sh, 't'), clean_(p.list, 60), text, false, Date.now(), '', clean_(p.for, 60), who]); return; }
+    case 'addTask': { const text = clean_(p.text, 300); if (!text) return; const sh = sheet('To-dos'); const id = nextId_(sh, 't'); sh.appendRow([id, clean_(p.list, 60), text, false, Date.now(), '', clean_(p.for, 60), who]); return { id }; }
     case 'toggleEvent': { const sh = sheet('Event marks'), r = findRow_(sh, p.id); if (r) sh.getRange(r, 2).setValue(p.done === '1' ? Date.now() : ''); else if (p.done === '1') sh.appendRow([clean_(p.id, 200), Date.now()]); return; }
     case 'addEvent': case 'editEvent': {
       const title = clean_(p.title, 200); if (!title || !/^\d{4}-\d{2}-\d{2}$/.test(p.date)) throw new Error('Event needs a title and a date');
       if (A === 'editEvent' || !isGoogleTarget_(config_(ss).addTo)) {
         const sh = sheet('Events'), row = eventRowValues_(p, who);
-        if (A === 'addEvent') { row[0] = nextId_(sh, 'ev'); sh.appendRow(row); return; }
+        if (A === 'addEvent') { row[0] = nextId_(sh, 'ev'); sh.appendRow(row); return { id: row[0] }; }
         const r = findRow_(sh, p.id); if (!r) throw new Error('That event was deleted from the sheet');
         row[0] = String(p.id); row[10] = sh.getRange(r, 11).getValue() || who;
         sh.getRange(r, 1, 1, row.length).setValues([row]); return;
@@ -946,17 +981,17 @@ function act_(ss, p, me) {
     case 'addGathering': {
       const title = clean_(p.title, 200); if (!title || !/^\d{4}-\d{2}-\d{2}$/.test(p.date)) throw new Error('A gathering needs a name and a date');
       const sh = sheet('Gatherings');
-      sh.appendRow([nextId_(sh, 'g'), title, p.date, /^\d{2}:\d{2}$/.test(p.time || '') ? p.time : '', clean_(p.where, 200), clean_(p.host, 100) || who, clean_(p.details, 2000, true), /^\d{4}-\d{2}-\d{2}$/.test(p.by || '') ? p.by : '']);
-      return;
+      const id = nextId_(sh, 'g'); sh.appendRow([id, title, p.date, /^\d{2}:\d{2}$/.test(p.time || '') ? p.time : '', clean_(p.where, 200), clean_(p.host, 100) || who, clean_(p.details, 2000, true), /^\d{4}-\d{2}-\d{2}$/.test(p.by || '') ? p.by : '']);
+      return { id };
     }
-    case 'bringAdd': { const item = clean_(p.item, 200); if (!item || !findRow_(sheet('Gatherings'), p.id)) return; sheet('Bring list').appendRow([String(p.id), item, p.mine === '1' ? who : '', who]); return; }
+    case 'bringAdd': { const item = clean_(p.item, 200); if (!item || !findRow_(sheet('Gatherings'), p.id)) return; const bl = sheet('Bring list'); bl.appendRow([String(p.id), item, p.mine === '1' ? who : '', who]); return { row: bl.getLastRow() }; }
     case 'dirSave': {                                  // anyone (not view-only) can add people or fix anyone's details
       const sh = sheet('Directory'), name = clean_(p.name, 100); if (!name) throw new Error('Add a name');
       if (p.birthday && !/^\d{4}-\d{2}-\d{2}$/.test(p.birthday)) throw new Error('The birthday should be a date');
       if (p.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(p.email)) throw new Error('That email doesn\'t look right');
       const row = [name, clean_(p.household, 100), clean_(p.phone, 40), clean_(p.email, 120), clean_(p.address, 300), p.birthday || '', clean_(p.notes, 500, true)];
       if (p.row) { const r = Number(p.row); if (!rowMatches(sh, r, 1, p.orig)) throw new Error('That entry changed – refresh and try again'); sh.getRange(r, 1, 1, 7).setValues([row]); }
-      else sh.appendRow(row);
+      else { sh.appendRow(row); return { row: sh.getLastRow() }; }
       return;
     }
     case 'dirDelete': {                                // organizers only
@@ -1001,16 +1036,16 @@ function act_(ss, p, me) {
       const q = clean_(p.question, 300), opts = pollOptions_(p.options);
       if (!q || opts.length < 2) throw new Error('A poll needs a question and at least two options');
       const sh = sheet('Polls');
-      sh.appendRow([nextId_(sh, 'p'), q, opts.map(o => clean_(o, 120)).join('\n'), /^\d{4}-\d{2}-\d{2}$/.test(p.closes || '') ? p.closes : '', who, p.multiple === '1']); return;
+      const id = nextId_(sh, 'p'); sh.appendRow([id, q, opts.map(o => clean_(o, 120)).join('\n'), /^\d{4}-\d{2}-\d{2}$/.test(p.closes || '') ? p.closes : '', who, p.multiple === '1']); return { id };
     }
     case 'addRecipe': {
       const name = clean_(p.name, 200); if (!name) throw new Error('A recipe needs a name');
-      sheet('Recipes').appendRow([name, clean_(p.from, 100) || who, clean_(p.category, 60), clean_(p.ingredients, 5000, true), clean_(p.steps, 10000, true), /^https?:\/\//.test(p.link || '') ? clean_(p.link, 500) : '', who]); return;
+      const rs = sheet('Recipes'); rs.appendRow([name, clean_(p.from, 100) || who, clean_(p.category, 60), clean_(p.ingredients, 5000, true), clean_(p.steps, 10000, true), /^https?:\/\//.test(p.link || '') ? clean_(p.link, 500) : '', who]); return { id: 'r' + rs.getLastRow() };
     }
     case 'marketPost': {
       const what = clean_(p.what, 200); if (!what) throw new Error('Say what you\'re giving away or need help with');
       const sh = sheet('Marketplace');
-      sh.appendRow([nextId_(sh, 'm'), new Date(), who, p.type === 'Need help' ? 'Need help' : 'Giving away', what, clean_(p.details, 2000, true), clean_(p.region, 60), 'Open', '', new Date()]); return;
+      const id = nextId_(sh, 'm'); sh.appendRow([id, new Date(), who, p.type === 'Need help' ? 'Need help' : 'Giving away', what, clean_(p.details, 2000, true), clean_(p.region, 60), 'Open', '', new Date()]); return { id };
     }
     case 'marketTake': case 'marketDone': case 'marketReopen': case 'marketDelete': {
       const sh = sheet('Marketplace'), r = findRow_(sh, p.id); if (!r) throw new Error('That post was removed');
@@ -1028,7 +1063,7 @@ function act_(ss, p, me) {
     case 'storyPost': {
       const title = clean_(p.title, 200), text = clean_(p.story, 20000, true); if (!title || !text) throw new Error('A story needs a title and the story');
       const sh = sheet('Stories');
-      sh.appendRow([nextId_(sh, 's'), new Date(), who, title, text, clean_(p.about, 200), clean_(p.when, 60), /^https?:\/\//.test(p.photo || '') ? clean_(p.photo, 500) : '']); return;
+      const id = nextId_(sh, 's'); sh.appendRow([id, new Date(), who, title, text, clean_(p.about, 200), clean_(p.when, 60), /^https?:\/\//.test(p.photo || '') ? clean_(p.photo, 500) : '']); return { id };
     }
     case 'storyDelete': {
       const sh = sheet('Stories'), r = findRow_(sh, p.id); if (!r) return;
@@ -1036,7 +1071,7 @@ function act_(ss, p, me) {
       sh.deleteRow(r); return;
     }
     case 'deleteEvent': { const sh = sheet('Events'), r = findRow_(sh, p.id); if (r) sh.deleteRow(r); return; }
-    case 'addShop': { const item = clean_(p.item, 120); if (!item) return; sheet('Shopping').appendRow([item, clean_(p.qty, 20), who, false, '', clean_(p.store, 60)]); return; }
+    case 'addShop': { const item = clean_(p.item, 120); if (!item) return; const sh = sheet('Shopping'); sh.appendRow([item, clean_(p.qty, 20), who, false, '', clean_(p.store, 60)]); return { row: sh.getLastRow() }; }
     case 'toggleShop': { const sh = sheet('Shopping'), r = Number(p.row); if (rowMatches(sh, r, 1, p.item)) { sh.getRange(r, 4).setValue(p.got === '1'); sh.getRange(r, 5).setValue(p.got === '1' ? new Date() : ''); } return; }
     case 'clearShop': { const sh = sheet('Shopping'), v = sh.getDataRange().getValues(); for (let i = v.length - 1; i >= 1; i--) if (truthy_(v[i][3])) sh.deleteRow(i + 1); return; }
     case 'addMeal': { if (!/^\d{4}-\d{2}-\d{2}$/.test(p.date) || !clean_(p.what, 200)) throw new Error('Meal needs a date and a dish'); sheet('Meals').appendRow([p.date, clean_(p.meal, 20) || 'Dinner', clean_(p.what, 200), clean_(p.cook, 60)]); return; }
@@ -1053,16 +1088,16 @@ function act_(ss, p, me) {
       if (rowMatches(sh, r, 1, p.goal)) sh.getRange(r, 3).setValue((num_(sh.getRange(r, 3).getValue()) || 0) + amt); return;
     }
     case 'tripItem': { const sh = sheet('Trip list'), r = Number(p.row); if (rowMatches(sh, r, 2, p.item)) sh.getRange(r, 5).setValue(p.done === '1'); return; }
-    case 'addTripItem': { const item = clean_(p.item, 200); if (!item) return; sheet('Trip list').appendRow([clean_(p.trip, 100), item, p.type === 'Packing' ? 'Packing' : 'Before you go', clean_(p.for, 60), false]); return; }
+    case 'addTripItem': { const item = clean_(p.item, 200); if (!item) return; const sh = sheet('Trip list'); sh.appendRow([clean_(p.trip, 100), item, p.type === 'Packing' ? 'Packing' : 'Before you go', clean_(p.for, 60), false]); return { row: sh.getLastRow() }; }
     case 'addTrip': { if (!clean_(p.trip, 100) || !/^\d{4}-\d{2}-\d{2}$/.test(p.start)) throw new Error('Trip needs a name and a start date'); sheet('Trips').appendRow([clean_(p.trip, 100), p.start, /^\d{4}-\d{2}-\d{2}$/.test(p.end) ? p.end : p.start, clean_(p.where, 100)]); return; }
-    case 'addIdea': { const idea = clean_(p.idea, 200); if (!idea) return; sheet('Date ideas').appendRow([idea, clean_(p.cost, 10), false, 'Added by ' + who]); return; }
+    case 'addIdea': { const idea = clean_(p.idea, 200); if (!idea) return; const sh = sheet('Date ideas'); sh.appendRow([idea, clean_(p.cost, 10), false, 'Added by ' + who]); return { row: sh.getLastRow() }; }
     case 'ideaTried': { const sh = sheet('Date ideas'), r = Number(p.row); if (rowMatches(sh, r, 1, p.idea)) sh.getRange(r, 3).setValue(p.tried === '1'); return; }
     case 'nextTurn': { const props = PropertiesService.getScriptProperties(); props.setProperty('DATE_TURN', String(Number(props.getProperty('DATE_TURN') || 0) + 1)); return; }
     case 'logNumber': {
       const v = Number(String(p.value).replace(/[$,\s]/g, '')); if (isNaN(v) || !clean_(p.name, 100)) throw new Error('Enter a number');
       sheet('Number log').appendRow([today, clean_(p.name, 100), v]); return;
     }
-    case 'addNote': { const text = clean_(p.text, 1000); if (!text) return; sheet('Notes').appendRow([new Date(), who, text, p.pin === '1']); return; }
+    case 'addNote': { const text = clean_(p.text, 1000); if (!text) return; const sh = sheet('Notes'); sh.appendRow([new Date(), who, text, p.pin === '1']); return { row: sh.getLastRow() }; }
     case 'pinNote': { const sh = sheet('Notes'), r = Number(p.row); if (rowMatches(sh, r, 3, p.text)) sh.getRange(r, 4).setValue(p.pin === '1'); return; }
     case 'deleteNote': { const sh = sheet('Notes'), r = Number(p.row); if (rowMatches(sh, r, 3, p.text)) sh.deleteRow(r); return; }
     case 'followup': { const sh = sheet('Follow-ups'), r = findRow_(sh, p.id), st = { sent: 'Sent', skip: 'Skipped', open: 'Open' }[p.status]; if (r && st) { sh.getRange(r, 11).setValue(st); sh.getRange(r, 12).setValue(st === 'Open' ? '' : new Date()); } return; }
@@ -1070,9 +1105,9 @@ function act_(ss, p, me) {
     case 'addFollowup': {
       if (!/^\d{4}-\d{2}-\d{2}$/.test(p.due) || !clean_(p.person, 100)) throw new Error('Follow-up needs a name and a date');
       const sh = sheet('Follow-ups');
-      sh.appendRow([nextId_(sh, 'f'), p.due, clean_(p.person, 100), clean_(p.topic, 200), ['Email', 'Text', 'Call', 'Other'].indexOf(p.channel) >= 0 ? p.channel : 'Email',
+      const id = nextId_(sh, 'f'); sh.appendRow([id, p.due, clean_(p.person, 100), clean_(p.topic, 200), ['Email', 'Text', 'Call', 'Other'].indexOf(p.channel) >= 0 ? p.channel : 'Email',
                     clean_(p.to, 200), clean_(p.phone, 40), clean_(p.subject, 300), clean_(p.message, 5000, true), '', 'Open', '']);
-      return;
+      return { id };
     }
     case 'setInventory': { const sh = sheet('Inventory'), r = Number(p.row), v = Number(p.onHand); if (rowMatches(sh, r, 1, p.item) && !isNaN(v)) sh.getRange(r, 2).setValue(Math.max(0, v)); return; }
   }
@@ -1420,13 +1455,13 @@ function game_(ss, tz, today, me) {
       maps: ms.length, mapAvg: ms.length ? Math.round(ms.reduce((a, r) => a + r.total, 0) / ms.length) : 0, mapBest: ms.reduce((a, r) => Math.max(a, r.total), 0) };
   }).sort((a, b) => b.titles - a.titles || (b.solved + b.maps) - (a.solved + a.maps) || a.who.localeCompare(b.who));
   const lw = weeks[weeks.length - 1];
-  const last = lw ? { from: ymd_(lw[0], tz), champs: splitList_(String(lw[1]).replace(/ & /g, ',')), pts: Number(lw[2]) || 0 } : null;
+  const last = lw ? { from: ymd_(lw[0], tz), champs: splitList_(String(lw[1]).replace(/ & /g, ',')), pts: Number(lw[2]) || 0, lines: String(lw[3] || '').split('\n').filter(Boolean).slice(0, 40) } : null;
   return { day: today, no, k: key, word, map, week, last: last && last.from !== week.from ? last : null, all };
 }
 
 function gameAct_(ss, p, me, today, tz) {
   const A = p.action;
-  if (A === 'gameShare') return gameShare_(ss, me, today, tz, p.game === 'map' ? 'map' : 'word');
+  if (A === 'gameShare') throw new Error('Games stay in the Games tab – sharing to chat is off');
   if (A === 'mapPlaceAdd' || A === 'mapPlaceDel') return mapPlaceAct_(ss, p, me, tz);
   if (String(p.day) !== today) throw new Error("That was yesterday's game – today's is ready");
   if (A === 'mapGuess') return mapGuess_(ss, p, me, today, tz);
@@ -1543,11 +1578,12 @@ function gameWeeklyPost_(ss, tz, from) {
     '\n\nEveryone starts this week at 0. Good luck! 🍀';
   wsh.appendRow([from, champs.join(' & '), champs.length ? wk.rows[0].pts : 0, lines.join('\n'), new Date()]);
   SpreadsheetApp.flush();
-  let posted = false; try { posted = gamePost_(ss, text); } catch (e) { console.warn('Games weekly post: ' + e.message); }
+  bumpGen_(['Game weeks']);
+  // v3.95: results stay in the Games tab; everyone gets a notification that opens it (nothing goes to the chat)
   try {
     const ppl = rows_(ss, 'People').filter(r => r[0] && r[9] && truthy_(r[7]));
-    push_(ss, ppl.map(r => ({ uid: String(r[9]), kind: 'msg', direct: false, title: '🏆 Family Games: ' + (champs.length ? champs.join(' & ') + ' won the week' : 'new week'),
-      body: champs.length ? champs.join(' & ') + ' finished on top with ' + wk.rows[0].pts + ' points. Everyone starts this week at 0.' : 'Everyone starts this week at 0.', url: posted ? '?go=chat:general' : '?go=games', tag: 'games-week' })));
+    push_(ss, ppl.map(r => ({ uid: String(r[9]), kind: 'games', direct: false, title: '🏆 Family Games: ' + (champs.length ? champs.join(' & ') + ' won the week' : 'new week'),
+      body: champs.length ? champs.join(' & ') + ' finished on top with ' + wk.rows[0].pts + ' points. Tap for last week\'s results.' : 'Everyone starts this week at 0.', url: '?go=games', tag: 'games-week' })));
   } catch (e) { console.warn('Games weekly push: ' + e.message); }
   return 'posted';
 }
@@ -1560,7 +1596,7 @@ function gameTrigger_() {
   } catch (e) { console.warn('Games trigger: ' + e.message); return false; }
 }
 /** Menu: post last week's update now (if it hasn't gone out). */
-function gameWeeklyNow() { const r = gameWeekly(); ui_().alert('Family Games', r === 'posted' ? "Last week's results are in the Everyone chat." : r === 'already posted' ? "Last week's results were already posted." : r === 'nobody played' ? 'Nobody played last week, so there is nothing to post.' : 'Turn on Games on the Features tab first.', ui_().ButtonSet.OK); }
+function gameWeeklyNow() { const r = gameWeekly(); ui_().alert('Family Games', r === 'posted' ? "Last week's results are in the Games tab, and everyone with notifications on got one." : r === 'already posted' ? "Last week's results were already sent." : r === 'nobody played' ? 'Nobody played last week.' : 'Games is turned off.', ui_().ButtonSet.OK); }
 
 /* ============================================================
    Dashboard calendar: Events tab, outside iCal links, subscription feeds
@@ -2082,6 +2118,7 @@ function chat(key, channel, text, photo, opt) {
     if (i >= 0) rs.getRange(i + 2, 3).setValue(new Date()); else rs.appendRow([me.id, channel, new Date()]);
     SpreadsheetApp.flush();
   } finally { lock.releaseLock(); }
+  try { bumpGen_(['Messages', 'Chat reads']); } catch (e) {}
   memoReset_(false);
   if (sending) { try { pushChat_(ss, me, channel, String(text || '').trim(), !!pid); } catch (e) {} }
   const ppl = chatPeople_(ss), byId = {}; ppl.forEach(r => { byId[String(r[9])] = String(r[0]); });
@@ -2374,8 +2411,60 @@ function chatPush(payload, sig) {
    ============================================================ */
 function dataLive_(ss) { return !!(setting_(ss, 'Data service address') && setting_(ss, 'Data service secret')); }
 function dataDirty_() { try { CacheService.getScriptCache().put('DATA_DIRTY', String(Date.now()), 21600); } catch (e) {} }
-/** Simple trigger: edits made by hand in the sheet reach the app within a minute. */
-function onEdit(e) { dataDirty_(); }
+/** Simple trigger: edits made by hand in the sheet reach the app within a minute – and only the sections that read that tab rebuild. */
+function onEdit(e) { dataDirty_(); try { bumpGen_([e && e.range ? e.range.getSheet().getName() : '*']); } catch (err) { try { bumpGen_(['*']); } catch (_) {} } }
+
+/* ============================================================
+   v3.95 – only rebuild what changed (the Peregrine Team way)
+   Each tab has a change counter (script properties, so it never expires). A save or a hand edit bumps the counters of the
+   tabs it touched. Each section of the app's data has a version made from the counters of the tabs it reads, the person,
+   the day (and a 15-minute clock for calendar sections), so a section the phone already holds is neither built nor sent.
+   '*' is bumped by anything that could touch everything (setup, people changes); every 3 hours everything rebuilds once anyway.
+   ============================================================ */
+const BASE_TABS_ = ['Settings', 'Features', 'People'];
+const SECTIONS_ = {
+  events: { tabs: ['Events', 'Event marks', 'Outside calendars', 'Gatherings'], live: true },
+  cal: { tabs: ['Outside calendars'], live: true },
+  tasks: { tabs: ['To-dos'] }, shopping: { tabs: ['Shopping'] }, meals: { tabs: ['Meals'] },
+  routines: { tabs: ['Routines', 'Routine log'] }, upkeep: { tabs: ['Upkeep'] }, bills: { tabs: ['Bills'] },
+  budget: { tabs: ['Budget'] }, goals: { tabs: ['Goals'] }, numbers: { tabs: ['Numbers', 'Number log'] },
+  trips: { tabs: ['Trips', 'Trip list'] }, dateNights: { tabs: ['Date ideas', 'Events', 'Outside calendars'], live: true },
+  dates: { tabs: ['Dates', 'Directory'] }, notes: { tabs: ['Notes'] }, links: { tabs: ['Links'] },
+  followups: { tabs: ['Follow-ups'] }, inventory: { tabs: ['Inventory'] }, directory: { tabs: ['Directory'] },
+  gatherings: { tabs: ['Gatherings', 'RSVPs', 'Bring list'] }, polls: { tabs: ['Polls', 'Votes'] }, recipes: { tabs: ['Recipes'] },
+  market: { tabs: ['Marketplace', 'Directory'] }, stories: { tabs: ['Stories'] },
+  game: { tabs: ['Game', 'Map plays', 'Map places', 'Game weeks'] },
+  channels: { tabs: ['Channels', 'Messages', 'Chat reads'] }, admin: { tabs: [] },
+};
+/** The tabs a save touched, for the saves that don't go through act_'s sheet() helper. '*' = everything. */
+const TOUCH_ = {
+  newChannel: ['Channels', 'Messages', 'Chat reads'], editChannel: ['Channels', 'Messages', 'Chat reads'], deleteMessage: ['Channels', 'Messages', 'Chat reads'],
+  pushSub: ['Push'], pushUnsub: ['Push'], pushPrefs: ['Push'], pushTest: ['Push'],
+  personAdd: ['*'], personCode: ['*'], personLink: ['*'], personRole: ['*'], personActive: ['*'], personHousehold: ['*'],
+  gameGuess: ['Game'], mapGuess: ['Map plays'], mapPlaceAdd: ['Map places'], mapPlaceDel: ['Map places'],
+  deleteGathering: ['RSVPs', 'Bring list'], nextTurn: ['Date ideas'], addEvent: ['Events'], editEvent: ['Events'],
+};
+let TOUCHED_ = null, GENS_ = null;
+function gens_() { if (!GENS_) { try { GENS_ = PropertiesService.getScriptProperties().getProperties(); } catch (e) { GENS_ = {}; } } return GENS_; }
+function gen_(tab) { return gens_()['G:' + tab] || '0'; }
+function bumpGen_(tabs) {
+  const list = [].concat(tabs || []).filter(Boolean).filter((t, i, a) => a.indexOf(t) === i); if (!list.length) return;
+  const stamp = Date.now().toString(36) + Math.random().toString(36).slice(2, 5), set = {};
+  list.forEach(t => { set['G:' + t] = stamp; });
+  try { PropertiesService.getScriptProperties().setProperties(set); } catch (e) {}
+  if (GENS_) Object.assign(GENS_, set);
+  dataDirty_();
+}
+/** Every section's current version for this person (short hashes). */
+function secVersions_(me, today) {
+  const g = gens_(), now = Date.now(), quarter = Math.floor(now / 9e5), third = Math.floor(now / 108e5), out = {};
+  const base = [VERSION, me.name, me.role, me.household || '', today, third, g['G:*'] || '0'].concat(BASE_TABS_.map(t => g['G:' + t] || '0')).join('|');
+  Object.keys(SECTIONS_).forEach(k => {
+    const S = SECTIONS_[k], raw = [base, k, S.live ? quarter : ''].concat(S.tabs.map(t => g['G:' + t] || '0')).join('|');
+    out[k] = Utilities.base64Encode(Utilities.computeDigest(Utilities.DigestAlgorithm.MD5, raw, Utilities.Charset.UTF_8)).slice(0, 12);
+  });
+  return out;
+}
 function pushDataTick() { try { pushData_(false); } catch (e) { console.warn('fast loading: ' + e); } }
 const hex_ = bytes => bytes.map(b => ('0' + ((b + 256) % 256).toString(16)).slice(-2)).join('');
 function pushData_(force) {
